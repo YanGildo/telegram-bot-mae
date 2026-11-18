@@ -27,6 +27,7 @@ router.callback_query.filter(F.message.chat.type == "private")
 class Flow(StatesGroup):
     token = State()  # esperando o token de um bot novo (ou o token novo de um bot existente)
     allow_user = State()  # dono da plataforma liberando alguém
+    add_padmin = State()  # dono colocando admin da plataforma
 
 
 def mae_link(manager: BotManager, param: str) -> str:
@@ -63,7 +64,7 @@ async def screen_home(uid: int, name: str, db: Database, settings: Settings, man
     rows = [[mbtn("➕ Criar seu bot", "new", style="primary")],
             [mbtn(f"🤖 Meus bots ({len(bots)})", "bots")],
             [mbtn("🤝 Parcerias", "parc"), mbtn("❓ Ajuda", "help")]]
-    if settings.is_owner(uid):
+    if await repo.is_platform_admin(db, settings, uid):
         rows.append([mbtn("🔐 Acesso e todos os bots", "acc")])
     return text, kb(*rows)
 
@@ -150,7 +151,7 @@ def screen_help() -> Screen:
     return text, kb([mbtn("« Início", "home")])
 
 
-async def screen_access(db: Database, manager: BotManager) -> Screen:
+async def screen_access(db: Database, manager: BotManager, is_super: bool = False) -> Screen:
     open_ = await repo.is_open(db)
     people = await repo.allowed_accounts(db)
     all_bots = await repo.all_bots(db)
@@ -169,8 +170,28 @@ async def screen_access(db: Database, manager: BotManager) -> Screen:
     rows += [[mbtn(f"❌ {(p.first_name or str(p.telegram_user_id))[:30]}", "acc", "del", p.telegram_user_id)] for p in people]
     rows.append([mbtn("🔒 Fechar para todos" if open_ else "🔓 Abrir para todos", "acc", "toggle")])
     rows.append([mbtn(f"📋 Todos os bots ({len(all_bots)})", "all")])
+    if is_super:
+        rows.append([mbtn("👑 Admins da plataforma", "padm")])
     rows.append([mbtn("« Início", "home")])
     return "\n".join(lines), kb(*rows)
+
+
+async def screen_padmins(db: Database, settings: Settings) -> Screen:
+    admins = await repo.platform_admins(db)
+    lines = ["👑 <b>Admins da plataforma</b>\n",
+             "Admins têm o mesmo poder que você no bot mãe: veem 🔐 Acesso, liberam pessoas, "
+             "abrem ou fecham a plataforma e gerenciam os bots de todo mundo. "
+             "Só quem está no <code>ADMIN_IDS</code> do servidor (você) mexe nesta lista.\n",
+             "<b>Donos (servidor)</b>"]
+    lines += [f"• <code>{x}</code>" for x in sorted(settings.owners)]
+    lines.append("\n<b>Admins</b>")
+    lines += [f"• {escape(a.first_name or '')} <code>{a.telegram_user_id}</code>" for a in admins] or ["<i>nenhum</i>"]
+    lines.append("\n• ➕ Adicionar admin: mande o ID da pessoa (ela vê o dela mandando /id aqui).\n"
+                 "• ❌ Nome: tira o admin.")
+    rows = [[mbtn("➕ Adicionar admin", "padm", "add")]]
+    rows += [[mbtn(f"❌ {(a.first_name or str(a.telegram_user_id))[:30]}", "padm", "del", a.telegram_user_id)]
+             for a in admins]
+    return "\n".join(lines), kb(*rows, [mbtn("« Acesso", "acc")])
 
 
 async def screen_all(db: Database, manager: BotManager) -> Screen:
@@ -215,7 +236,7 @@ async def cancel(message: Message, state: FSMContext, db: Database, settings: Se
 async def on_button(cb: CallbackQuery, callback_data: MP, state: FSMContext, db: Database, settings: Settings,
                     manager: BotManager) -> None:
     uid, s_, a, i = cb.from_user.id, callback_data.s, callback_data.a, callback_data.i
-    owner = settings.is_owner(uid)
+    owner = await repo.is_platform_admin(db, settings, uid)
 
     if s_ == "home":
         await state.clear()
@@ -302,6 +323,25 @@ async def on_button(cb: CallbackQuery, callback_data: MP, state: FSMContext, db:
         return
 
     # ---- só o dono da plataforma ----
+    if s_ == "padm":
+        if not settings.is_owner(uid):
+            await cb.answer("Só o dono (ADMIN_IDS do servidor).", show_alert=True)
+            return
+        if a == "add":
+            await state.set_state(Flow.add_padmin)
+            await cb.answer()
+            await show(cb, ("➕ <b>Adicionar admin da plataforma</b>\n\nMande o ID da pessoa (só números). "
+                            "Ela descobre o dela mandando /id para mim.\n\n/cancelar para desistir.",
+                            kb([mbtn("❌ Cancelar", "padm")])))
+            return
+        if a == "del":
+            await repo.set_platform_admin(db, i, False)
+            await cb.answer("Admin removido.")
+        else:
+            await state.clear()
+            await cb.answer()
+        await show(cb, await screen_padmins(db, settings))
+        return
     if s_ in ("acc", "all") and not owner:
         await cb.answer("Só o dono da plataforma.", show_alert=True)
         return
@@ -323,7 +363,7 @@ async def on_button(cb: CallbackQuery, callback_data: MP, state: FSMContext, db:
             note = "Fechada: só liberados criam bots." if open_ else "Aberta: qualquer pessoa cria bots."
         await state.clear()
         await cb.answer(note)
-        await show(cb, await screen_access(db, manager))
+        await show(cb, await screen_access(db, manager, settings.is_owner(uid)))
         return
     if s_ == "all":
         await cb.answer()
@@ -333,6 +373,21 @@ async def on_button(cb: CallbackQuery, callback_data: MP, state: FSMContext, db:
 
 
 # ---------- textos digitados ----------
+
+@router.message(StateFilter(Flow.add_padmin))
+async def add_padmin(message: Message, state: FSMContext, db: Database, settings: Settings) -> None:
+    if not settings.is_owner(message.from_user.id):
+        await state.clear()
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Mande só o número do ID (ex.: <code>123456789</code>) ou /cancelar.")
+        return
+    await repo.set_platform_admin(db, int(raw), True)
+    await state.clear()
+    await message.answer(f"✅ <code>{raw}</code> agora é admin da plataforma. Ela vê 🔐 Acesso mandando /start.")
+    await send(message, await screen_padmins(db, settings))
+
 
 @router.message(StateFilter(Flow.allow_user))
 async def allow_user(message: Message, state: FSMContext, db: Database, settings: Settings,
@@ -344,7 +399,7 @@ async def allow_user(message: Message, state: FSMContext, db: Database, settings
     await repo.set_allowed(db, int(raw), True)
     await state.clear()
     await message.answer(f"✅ <code>{raw}</code> liberado para criar bots.")
-    await send(message, await screen_access(db, manager))
+    await send(message, await screen_access(db, manager, settings.is_owner(message.from_user.id)))
 
 
 @router.message(StateFilter(Flow.token))
@@ -382,7 +437,7 @@ async def receive_token(message: Message, state: FSMContext, bot: Bot, db: Datab
 
     if child_id is not None:  # trocar token de um bot existente
         row = await repo.get_bot(db, child_id)
-        if row is None or (row.owner_id != uid and not settings.is_owner(uid)):
+        if row is None or (row.owner_id != uid and not await repo.is_platform_admin(db, settings, uid)):
             await state.clear()
             return
         if me.id != row.telegram_bot_id:
@@ -391,7 +446,7 @@ async def receive_token(message: Message, state: FSMContext, bot: Bot, db: Datab
             return
         target = row
     elif existing is not None:
-        if existing.owner_id != uid and not settings.is_owner(uid):
+        if existing.owner_id != uid and not await repo.is_platform_admin(db, settings, uid):
             await message.answer("Esse bot já está cadastrado por outra pessoa.")
             return
         target = existing  # mesmo dono cadastrando de novo: só atualiza o token

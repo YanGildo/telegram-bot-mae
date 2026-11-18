@@ -32,6 +32,7 @@ class Account(Base):
     first_name: Mapped[str | None] = mapped_column(String(128))
     username: Mapped[str | None] = mapped_column(String(64))
     allowed: Mapped[bool] = mapped_column(Boolean, default=False)  # liberado para criar bots (fase fechada)
+    platform_admin: Mapped[bool | None] = mapped_column(Boolean, default=False)  # admin do bot mãe (dado pelo dono)
     referrer: Mapped[str | None] = mapped_column(String(64))  # de onde veio (ex.: parc_12)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

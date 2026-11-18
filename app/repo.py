@@ -48,8 +48,34 @@ async def touch_account(db: Database, user: TgUser, referrer: str | None = None)
         return acc
 
 
+async def is_platform_admin(db: Database, settings: Settings, user_id: int | None) -> bool:
+    """Dono (ADMIN_IDS do .env) ou admin que o dono colocou pelo bot."""
+    if user_id is None:
+        return False
+    if settings.is_owner(user_id):
+        return True
+    async with db.session() as s:
+        acc = await s.scalar(select(Account).where(Account.telegram_user_id == user_id))
+        return bool(acc and acc.platform_admin)
+
+
+async def platform_admins(db: Database) -> list[Account]:
+    async with db.session() as s:
+        return list(await s.scalars(select(Account).where(Account.platform_admin.is_(True)).order_by(Account.id)))
+
+
+async def set_platform_admin(db: Database, user_id: int, on: bool) -> None:
+    async with db.session() as s:
+        acc = await s.scalar(select(Account).where(Account.telegram_user_id == user_id))
+        if acc is None:
+            acc = Account(telegram_user_id=user_id)
+            s.add(acc)
+        acc.platform_admin = on
+        await s.commit()
+
+
 async def can_create(db: Database, settings: Settings, user_id: int) -> bool:
-    if settings.is_owner(user_id) or await is_open(db):
+    if await is_platform_admin(db, settings, user_id) or await is_open(db):
         return True
     async with db.session() as s:
         acc = await s.scalar(select(Account).where(Account.telegram_user_id == user_id))

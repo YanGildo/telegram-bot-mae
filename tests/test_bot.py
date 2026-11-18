@@ -206,6 +206,27 @@ async def main():
     await click(OWNER, MP(s="acc", a="del", i=222).pack())
     check("mãe: tirar liberação", not await __import__("app.repo", fromlist=["x"]).can_create(db, settings, 222))
 
+    # admins da plataforma (colocados pelo dono dentro do bot)
+    calls = await click(OWNER, MP(s="acc").pack())
+    check("padm: dono vê o botão Admins da plataforma", any("👑 Admins da plataforma" in buttons(m) for m in texts(calls)))
+    calls = await click(BIA, MP(s="padm", a="add").pack())
+    check("padm: quem não é dono não mexe", not any("Adicionar admin da plataforma" in m.text for m in texts(calls)))
+    await click(OWNER, MP(s="padm", a="add").pack())
+    calls = await say(OWNER, "333")
+    check("padm: dono adiciona admin pelo ID", any("admin da plataforma" in m.text for m in texts(calls)))
+    calls = await say(BIA, "/start")
+    check("padm: admin vê Acesso", "🔐 Acesso e todos os bots" in buttons(texts(calls)[0]))
+    calls = await click(BIA, MP(s="acc").pack())
+    e = texts(calls)
+    check("padm: admin abre Acesso, mas sem a lista de admins", e and "Acesso à plataforma" in e[-1].text
+          and "👑 Admins da plataforma" not in buttons(e[-1]))
+    calls = await click(BIA, MP(s="new").pack())
+    check("padm: admin cria bots mesmo com a plataforma fechada", any("/newbot" in m.text for m in texts(calls)))
+    await say(BIA, "/cancelar")
+    await click(OWNER, MP(s="padm", a="del", i=333).pack())
+    calls = await say(BIA, "/start")
+    check("padm: dono tira o admin", "🔐 Acesso e todos os bots" not in buttons(texts(calls)[0]))
+
     # meus bots / ligar e desligar / trocar token
     calls = await click(OWNER, MP(s="bots").pack())
     check("mãe: meus bots lista com status", any("🟢 @filho1_bot" in m.text for m in texts(calls)))
