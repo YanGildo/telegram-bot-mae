@@ -17,21 +17,23 @@ class CP(CallbackData, prefix="cp"):
     s: str
     a: str = ""
     i: int = 0
+    j: int = 0
 
 
 Screen = tuple[str, InlineKeyboardMarkup]
 
 
 def kb(*rows: list[InlineKeyboardButton] | None) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[r for r in rows if r])
+    clean = [[b for b in r if b is not None] for r in rows if r]
+    return InlineKeyboardMarkup(inline_keyboard=[r for r in clean if r])
 
 
 def mbtn(text: str, s: str, a: str = "", i: int = 0, style: str | None = None) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=MP(s=s, a=a, i=i).pack(), style=style)
 
 
-def cbtn(text: str, s: str, a: str = "", i: int = 0, style: str | None = None) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=CP(s=s, a=a, i=i).pack(), style=style)
+def cbtn(text: str, s: str, a: str = "", i: int = 0, style: str | None = None, j: int = 0) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=CP(s=s, a=a, i=i, j=j).pack(), style=style)
 
 
 def url(text: str, link: str) -> InlineKeyboardButton:

@@ -68,6 +68,8 @@ async def main() -> None:
     await mother.set_my_commands(MOTHER_COMMANDS, scope=BotCommandScopeAllPrivateChats())
     await manager.start_all()
     pruner = asyncio.create_task(prune_loop(db))
+    from .child import scheduling
+    scheduler = asyncio.create_task(scheduling.loop(manager))
 
     logger.info("Bot mãe @%s no ar. Ctrl+C para parar.", me.username)
     if not settings.owners:
@@ -76,6 +78,7 @@ async def main() -> None:
         await mother_dp.start_polling(mother, allowed_updates=mother_dp.resolve_used_update_types())
     finally:
         pruner.cancel()
+        scheduler.cancel()
         await manager.stop_all()
         await mother.session.close()
         await db.close()

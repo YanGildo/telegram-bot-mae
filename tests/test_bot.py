@@ -13,10 +13,12 @@ sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path
 from aiogram import Bot  # noqa: E402
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.exceptions import TelegramUnauthorizedError  # noqa: E402
-from aiogram.methods import (DeleteMessage, DeleteWebhook, EditMessageText, GetChatMember, GetMe,  # noqa: E402
-                             GetUpdates, LeaveChat, SendMessage, SetMyCommands)
+from aiogram.methods import (BanChatMember, DeleteMessage, DeleteMessages, DeleteWebhook,  # noqa: E402
+                             EditMessageText, GetChatAdministrators, GetChatMember, GetMe, GetUpdates, LeaveChat,
+                             PinChatMessage, RestrictChatMember, SendMediaGroup, SendMessage, SendPhoto, SendVideo,
+                             SetMyCommands)
 from aiogram.types import (CallbackQuery, Chat, ChatMemberAdministrator, ChatMemberLeft, ChatMemberMember,  # noqa: E402
-                           ChatMemberUpdated, Message, Update, User)
+                           ChatMemberUpdated, Message, MessageEntity, PhotoSize, Update, User, Video)
 from cryptography.fernet import Fernet  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 from sqlalchemy import select  # noqa: E402
@@ -76,6 +78,17 @@ class FakeSession(BaseSession):
                            text=method.text)
         if isinstance(method, GetChatMember):
             return admin_member(BOTS[key], restrict=self.restrict)
+        if isinstance(method, (SendPhoto, SendVideo)):
+            self.n += 1
+            return Message(message_id=self.n, date=NOW, chat=Chat(id=method.chat_id, type="supergroup"))
+        if isinstance(method, SendMediaGroup):
+            out = []
+            for _ in method.media:
+                self.n += 1
+                out.append(Message(message_id=self.n, date=NOW, chat=Chat(id=method.chat_id, type="supergroup")))
+            return out
+        if isinstance(method, GetChatAdministrators):
+            return [admin_member(OWNER)]
         return True
 
     async def stream_content(self, *a, **k):
@@ -329,8 +342,257 @@ async def main():
     check("filho: admin do bot pode colocar o bot em grupo", not any(isinstance(m, LeaveChat) for _, m in calls))
     calls = await csay(ANA, "/id", chat=Chat(id=-100604, type="supergroup", title="Grupo da Ana"))
     check("filho: /id no grupo mostra o ID do chat", any("-100604" in m.text for m in texts(calls)))
-    calls = await cclick(OWNER, CP(s="soon", a="acervo").pack())
-    check("filho: telas futuras explicam a função", any("Acervo" in m.text and "próxima etapa" in m.text for m in texts(calls)))
+    calls = await csay(OWNER, "/start")
+    check("filho: painel sem 'em breve'", not any("em breve" in m.text for m in texts(calls)))
+
+    # ================= Etapas 2-4 =================
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from app.child import scheduling as sched
+    from app.db import AcervoItem, PendingDelete, Schedule, WordFilter
+    BR = ZoneInfo("America/Sao_Paulo")
+    ANA_G = Chat(id=-100604, type="supergroup", title="Grupo da Ana")
+    async with db.session() as s:
+        rows = {c.chat_id: c for c in await s.scalars(select(ChildChat).where(ChildChat.child_id == c1.id))}
+    chan_row, grp_row = rows[-100602], rows[-100604]
+
+    def photo(fid):
+        return [PhotoSize(file_id=fid, file_unique_id=fid + "u", width=10, height=10)]
+
+    async def chan_post(**kw):
+        m = Message(message_id=nid(), date=NOW, chat=Chat(id=-100602, type="channel", title="Canal do Yan"), **kw)
+        return await feed(child_dp, cbot, channel_post=m)
+
+    # --- acervo
+    calls = await cclick(OWNER, CP(s="acv").pack())
+    check("acervo: tela abre explicando", any("canal de origem" in m.text and "Ver mídias" in m.text for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="acv", a="src").pack())
+    check("acervo: lista canais para origem", any("Canal do Yan" in " ".join(buttons(m)) for m in texts(calls)))
+    await chan_post(photo=photo("antes"))
+    await cclick(OWNER, CP(s="acv", a="setsrc", i=chan_row.id).pack())
+    await chan_post(photo=photo("p1"), caption="Legenda 1")
+    await chan_post(video=Video(file_id="v1", file_unique_id="v1u", width=1, height=1, duration=3), media_group_id="g1",
+                    caption="Álbum")
+    await chan_post(photo=photo("p2"), media_group_id="g1")
+    await chan_post(text="só texto")
+    async with db.session() as s:
+        items = list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id).order_by(AcervoItem.seq)))
+    check("acervo: captura foto e álbum (antes da origem não entra; texto ignora)",
+          len(items) == 2 and items[0].caption_html == "Legenda 1" and items[1].media.count('"f"') == 2)
+    calls = await cclick(OWNER, CP(s="acv").pack())
+    check("acervo: contagem no painel", any("Mídias: <b>2</b>" in m.text and "📚 1 álbuns" in m.text for m in texts(calls)))
+
+    # limite rotativo / travado
+    from app.db import Acervo as AcvRow
+    async with db.session() as s:
+        a_ = await s.scalar(select(AcvRow).where(AcvRow.child_id == c1.id))
+        a_.max_items = 2
+        await s.commit()
+    await chan_post(photo=photo("p3"))
+    async with db.session() as s:
+        act = [x.media for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id,
+                                                                          AcervoItem.state == "active"))]
+    check("acervo: rotativo tira a mais antiga", len(act) == 2 and not any('"p1"' in x for x in act))
+    await cclick(OWNER, CP(s="acv", a="mode", i=1).pack())
+    calls = await chan_post(photo=photo("p4"))
+    async with db.session() as s:
+        n_act = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))))
+    check("acervo: travado não aceita e avisa o dono", n_act == 2 and any("cheio" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="acv", a="setlim", i=100).pack())
+    await cclick(OWNER, CP(s="acv", a="mode", i=0).pack())
+
+    # legenda e botões
+    await cclick(OWNER, CP(s="acv", a="in", i=3).pack())
+    await csay(OWNER, "Entre no canal!")
+    await cclick(OWNER, CP(s="acv", a="in", i=4).pack())
+    calls = await csay(OWNER, "sem link")
+    check("acervo: botão inválido pede de novo", any("Não entendi" in m.text for m in texts(calls)))
+    calls = await csay(OWNER, "Site - seusite.com | VIP - @meucanal")
+    check("acervo: botões salvos", any("Salvo" in m.text for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="acv", a="prev").pack())
+    prev = [m for _, m in calls if isinstance(m, (SendPhoto, SendMediaGroup))]
+    check("acervo: prévia com legenda + texto universal", prev and "Entre no canal!" in (
+        prev[0].caption if isinstance(prev[0], SendPhoto) else prev[0].media[0].caption or ""))
+
+    # programação do acervo
+    await cclick(OWNER, CP(s="schs", a="acervo").pack())
+    await cclick(OWNER, CP(s="schs", a="add", i=0).pack())
+    async with db.session() as s:
+        sa = await s.scalar(select(Schedule).where(Schedule.child_id == c1.id, Schedule.kind == "acervo"))
+    await cclick(OWNER, CP(s="sch", a="tog", i=sa.id).pack())
+    async with db.session() as s:
+        check("programação: continua desativada sem destino", not (await s.get(Schedule, sa.id)).enabled)
+    calls = await cclick(OWNER, CP(s="sch", a="dst", i=sa.id).pack())
+    check("programação: destinos não mostram o canal de origem",
+          any("Grupo da Ana" in " ".join(buttons(m)) and "Canal do Yan" not in " ".join(buttons(m)) for m in texts(calls)))
+    await cclick(OWNER, CP(s="sch", a="dsttog", i=sa.id, j=grp_row.id).pack())
+    await cclick(OWNER, CP(s="sch", a="setint", i=sa.id, j=30).pack())
+    await cclick(OWNER, CP(s="sch", a="tog", i=sa.id).pack())
+    async with db.session() as s:
+        sa = await s.get(Schedule, sa.id)
+    check("programação: ativa com próximo envio", sa.enabled and sa.next_run_at is not None)
+    session.take()
+    await sched.tick(manager, now=sa.next_run_at)
+    calls = session.take()
+    posts = [m for _, m in calls if isinstance(m, (SendPhoto, SendMediaGroup, SendVideo)) and m.chat_id == -100604]
+    check("programação: no horário publica do acervo no grupo", len(posts) == 1)
+    check("programação: botões do acervo vão junto", any(
+        isinstance(m, (SendPhoto, SendMessage)) and m.reply_markup and m.chat_id == -100604 for _, m in calls))
+    await sched.tick(manager, now=sa.next_run_at)
+    check("programação: não repete no mesmo horário", not any(isinstance(m, (SendPhoto, SendMediaGroup)) for _, m in session.take()))
+    async with db.session() as s:
+        used = [x.used_count for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id,
+                                                                                AcervoItem.state == "active"))]
+    await cclick(OWNER, CP(s="sch", a="now", i=sa.id).pack())
+    async with db.session() as s:
+        used2 = sorted(x.used_count for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id,
+                                                                                       AcervoItem.state == "active")))
+    check("acervo aleatório: só repete depois de usar todas", sorted(used) == [0, 1] and used2 == [1, 1])
+
+    # apagar anterior, fixar, exclusão automática
+    await cclick(OWNER, CP(s="sch", a="delp", i=sa.id).pack())
+    await cclick(OWNER, CP(s="sch", a="pin", i=sa.id).pack())
+    await cclick(OWNER, CP(s="sch", a="setauto", i=sa.id, j=5).pack())
+    calls = await cclick(OWNER, CP(s="sch", a="now", i=sa.id).pack())
+    check("programação: apaga a anterior e fixa", any(isinstance(m, DeleteMessages) for _, m in calls)
+          and any(isinstance(m, PinChatMessage) and m.disable_notification for _, m in calls))
+    async with db.session() as s:
+        pd = await s.scalar(select(PendingDelete).where(PendingDelete.chat_id == -100604))
+    await sched.tick(manager, now=pd.due_at + timedelta(seconds=1))
+    check("programação: exclusão automática apaga depois do tempo", any(isinstance(m, DeleteMessages) for _, m in session.take()))
+
+    # sequencial
+    await cclick(OWNER, CP(s="acv", a="setord", i=1).pack())
+    await cclick(OWNER, CP(s="acv", a="end", i=1).pack())
+    async with db.session() as s:
+        a_ = await s.scalar(select(AcvRow).where(AcvRow.child_id == c1.id))
+        a_.cursor = 0
+        await s.commit()
+    i1, _ = await sched.pick_item(db, c1.id)
+    i2, _ = await sched.pick_item(db, c1.id)
+    i3, why = await sched.pick_item(db, c1.id)
+    check("acervo sequencial: na ordem e para no fim", i1.seq < i2.seq and i3 is None and "fim" in why)
+
+    # pausar / zerar / restaurar
+    calls = await csay(OWNER, "/pausar")
+    sent, why = await sched.run_schedule(cbot, db, settings, sa.id)
+    check("acervo: /pausar segura as programações", sent == 0 and why == "acervo pausado")
+    await csay(OWNER, "/retomar")
+    await cclick(OWNER, CP(s="acv", a="reset2").pack())
+    async with db.session() as s:
+        n_act = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))))
+    await chan_post(photo=photo("depois"))
+    async with db.session() as s:
+        act = [x.media for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))]
+    check("acervo: zerar deixa só as novas", n_act == 0 and len(act) == 1 and '"depois"' in act[0])
+    await cclick(OWNER, CP(s="acv", a="restore").pack())
+    async with db.session() as s:
+        n_act = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))))
+    check("acervo: restaurar traz as arquivadas", n_act == 3)
+    calls = await cclick(OWNER, CP(s="acv", a="items").pack())
+    check("acervo: ver mídias lista com 🗑", any(any(b.startswith("🗑 #") for b in buttons(m)) for m in texts(calls)))
+
+    # --- mensagens repetidas
+    calls = await cclick(OWNER, CP(s="schs", a="msg").pack())
+    check("repetidas: tela como o Group Help", any("Mensagens repetidas" in m.text and "➕ Adicionar mensagem" in buttons(m)
+                                                   for m in texts(calls)))
+    await cclick(OWNER, CP(s="schs", a="add", i=1).pack())
+    async with db.session() as s:
+        sm = await s.scalar(select(Schedule).where(Schedule.child_id == c1.id, Schedule.kind == "msg"))
+    await cclick(OWNER, CP(s="sch", a="dsttog", i=sm.id, j=grp_row.id).pack())
+    calls = await cclick(OWNER, CP(s="sch", a="tog", i=sm.id).pack())
+    async with db.session() as s:
+        check("repetidas: não ativa vazia", not (await s.get(Schedule, sm.id)).enabled)
+    calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
+    check("repetidas: personalizar mostra texto/mídias/botões", any("📄 Texto ❌" in m.text and "👀 Visualização completa"
+                                                                   in buttons(m) for m in texts(calls)))
+    await cclick(OWNER, CP(s="msgc", a="text", i=sm.id).pack())
+    await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"), from_user=OWNER,
+                                               text="Oi grupo!", entities=[MessageEntity(type="bold", offset=0, length=3)]))
+    await cclick(OWNER, CP(s="msgc", a="media", i=sm.id).pack())
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"),
+                                                       from_user=OWNER, photo=photo("rep1")))
+    check("repetidas: recebe a mídia", any("Mídia recebida" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="msgc", a="btn", i=sm.id).pack())
+    await csay(OWNER, "Regras - t.me/regras")
+    calls = await cclick(OWNER, CP(s="msgc", a="full", i=sm.id).pack())
+    full = [m for _, m in calls if isinstance(m, SendPhoto) and m.chat_id == 111]
+    check("repetidas: visualização completa (negrito, foto e botão)", full and full[0].caption == "<b>Oi </b>grupo!"
+          and full[0].reply_markup is not None)
+    await cclick(OWNER, CP(s="sch", a="start", i=sm.id).pack())
+    await csay(OWNER, "23:23")
+    await cclick(OWNER, CP(s="sch", a="win", i=sm.id).pack())
+    calls = await csay(OWNER, "08:00-23:00")
+    await cclick(OWNER, CP(s="sch", a="tog", i=sm.id).pack())
+    calls = await cclick(OWNER, CP(s="sch", i=sm.id).pack())
+    check("repetidas: detalhe mostra cronograma, repetição e janela",
+          any("Cronograma: 23:23" in m.text and "08:00 às 23:00" in m.text and "Ativado ✅" in m.text for m in texts(calls)))
+    async with db.session() as s:
+        sm = await s.get(Schedule, sm.id)
+    nl = sched.to_local(sm.next_run_at, BR)
+    check("repetidas: próximo envio alinhado e dentro da janela", nl.minute == 23 and 8 <= nl.hour < 23)
+    await sched.tick(manager, now=sm.next_run_at)
+    check("repetidas: publica no horário", any(isinstance(m, SendPhoto) and m.chat_id == -100604 for _, m in session.take()))
+    # a cada N mensagens + máximo por dia
+    await cclick(OWNER, CP(s="sch", a="msgs", i=sm.id).pack())
+    await csay(OWNER, "3")
+    async with db.session() as s:
+        r = await s.get(Schedule, sm.id)
+        r.window_start, r.window_end, r.max_per_day, r.posts_today = 0, 1440, 0, 0
+        await s.commit()
+    for _ in range(2):
+        await csay(ANA, "oi", chat=ANA_G)
+    calls = await csay(ANA, "oi", chat=ANA_G)
+    check("repetidas: a cada 3 mensagens no grupo", any(isinstance(m, SendPhoto) and m.chat_id == -100604 for _, m in calls))
+    await cclick(OWNER, CP(s="sch", a="setmax", i=sm.id, j=1).pack())
+    for _ in range(3):
+        calls = await csay(ANA, "oi", chat=ANA_G)
+    check("repetidas: respeita o máximo por dia", not any(isinstance(m, SendPhoto) for _, m in calls))
+
+    # cálculo de horários
+    fake = Schedule(start_time="23:23", interval_min=30, weekdays=127, window_start=480, window_end=1380)
+    n1 = sched.compute_next(fake, datetime(2026, 11, 18, 10, 0, tzinfo=BR))
+    n2 = sched.compute_next(fake, datetime(2026, 11, 18, 22, 55, tzinfo=BR))
+    fake.weekdays = 0b0011111
+    n3 = sched.compute_next(fake, datetime(2026, 11, 21, 12, 0, tzinfo=BR))  # sábado
+    fake.weekdays, fake.end_date = 127, "2026-11-18"
+    n4 = sched.compute_next(fake, datetime(2026, 11, 18, 22, 55, tzinfo=BR))
+    check("horários: alinhado, janela, dias úteis e fim do período",
+          n1.hour == 10 and n1.minute == 23 and (n2.day, n2.hour, n2.minute) == (19, 8, 23)
+          and n3.weekday() == 0 and n4 is None)
+
+    # --- palavras proibidas
+    calls = await cclick(OWNER, CP(s="words").pack())
+    check("palavras: lista os grupos", any("Grupo da Ana" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="wf", a="act", i=grp_row.id, j=4).pack())
+    await cclick(OWNER, CP(s="wf", a="add", i=grp_row.id).pack())
+    calls = await csay(OWNER, "promo, chama no pv")
+    check("palavras: adiciona várias", any("Palavras na lista: 2" in m.text for m in texts(calls)))
+    session.take()
+    await csay(OWNER, "promoção aqui", chat=ANA_G)
+    calls = session.take()
+    check("palavras: dono do bot não é punido", not any(isinstance(m, BanChatMember) for _, m in calls))
+    calls = await csay(BIA, "Olha a PROMOÇÃO, chamá no PV", chat=ANA_G)
+    check("palavras: apaga e bane (ignora acento/maiúscula)", any(isinstance(m, DeleteMessage) for _, m in calls)
+          and any(isinstance(m, BanChatMember) and m.user_id == 333 for _, m in calls))
+    await cclick(OWNER, CP(s="wf", a="match", i=grp_row.id).pack())
+    calls = await csay(BIA, "promoção", chat=ANA_G)
+    check("palavras: busca exata não pega dentro de outra palavra", not any(isinstance(m, BanChatMember) for _, m in calls))
+    await cclick(OWNER, CP(s="wf", a="act", i=grp_row.id, j=1).pack())
+    await cclick(OWNER, CP(s="wf", a="wl", i=grp_row.id).pack())  # 3 -> 4
+    async with db.session() as s:
+        f = await s.scalar(select(WordFilter).where(WordFilter.chat_row_id == grp_row.id))
+        f.warn_limit = 2
+        await s.commit()
+    calls = await csay(BIA, "promo", chat=ANA_G)
+    check("palavras: advertência 1/2", any("Advertência 1/2" in m.text for m in texts(calls))
+          and not any(isinstance(m, RestrictChatMember) for _, m in calls))
+    calls = await csay(BIA, "promo", chat=ANA_G)
+    check("palavras: na 2ª advertência silencia", any(isinstance(m, RestrictChatMember) for _, m in calls))
+    await cclick(OWNER, CP(s="wf", a="rem", i=grp_row.id).pack())
+    await csay(OWNER, "promo")
+    calls = await csay(BIA, "promo", chat=ANA_G)
+    check("palavras: remover da lista", not any(isinstance(m, (RestrictChatMember, BanChatMember)) for _, m in calls))
 
     # ---------- reinício e token revogado ----------
     await manager.stop_all()

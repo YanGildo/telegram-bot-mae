@@ -82,16 +82,20 @@ Anti-spam por @ (com espera), ban em todos os grupos (só ban feito pelo dono/ad
 
 | Etapa | Entrega |
 |---|---|
-| 1. Base | Repositório novo; bot mãe criando e ligando filhos; painel do filho; registro dos grupos/canais |
-| 2. Acervo | Canal de origem, fila sequencial/aleatória, limite e rotação, zerar, modelo universal, painel e comandos |
-| 3. Mensagens repetidas | Agendador completo com mensagem fixa |
-| 4. Palavras proibidas | Listas, punições, por grupo |
+| ✅ 1. Base | Repositório novo; bot mãe criando e ligando filhos; painel do filho; registro dos grupos/canais |
+| ✅ 2. Acervo | Canal de origem, fila sequencial/aleatória, limite e rotação, zerar, modelo universal, painel e comandos |
+| ✅ 3. Mensagens repetidas | Agendador completo com mensagem fixa |
+| ✅ 4. Palavras proibidas | Listas, punições, por grupo |
 | 5. Funções do bot atual | Anti-spam, ban em todos, logs, moderação, grade |
 | 6. No ar | Mesmo servidor, serviço separado; testes; passo a passo de atualização |
 | Depois | Abrir para outras pessoas: planos, limites, pagamento |
 | Depois | 🤝 Parcerias entre bots filhos (precisa de mais de um dono na plataforma) |
 
-## Pendente para começar a Etapa 1
+## Situação (versão 3)
+
+Etapas 1 a 4 prontas e testadas. Próximas: 5 (funções do bot de clipes) e Parcerias.
+
+## Pendente que existia antes da Etapa 1 (resolvido)
 
 1. Repositório vazio e privado no GitHub (ex.: `telegram-bot-mae`).
 2. Criar o bot mãe no @BotFather (token vai direto no `.env` do servidor, nunca no chat).

@@ -8,7 +8,6 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 from sqlalchemy import delete, select
 
@@ -16,16 +15,15 @@ from .. import repo
 from ..db import ChildAdmin, ChildBot, ChildChat, Database, utcnow
 from ..manager import BotManager
 from ..ui import CP, Screen, cbtn, kb, send, show, url
+from . import acervo, schedules, words
+from .flow import ChildFlow
+from .scheduling import get_acervo, run_schedule
 
 logger = logging.getLogger(__name__)
 router = Router(name="filho")
 
 GROUP_RIGHTS = "change_info+delete_messages+restrict_members+invite_users+pin_messages+manage_topics"
 CHANNEL_RIGHTS = "post_messages+edit_messages+delete_messages+invite_users"
-
-
-class ChildFlow(StatesGroup):
-    add_admin = State()
 
 
 def mae_link(manager: BotManager, param: str) -> str:
@@ -88,15 +86,15 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
     text = (f"⚙️ <b>Painel do @{escape(child.username)}</b>\n\n"
             "Daqui você configura tudo deste bot. Toque numa opção:\n\n"
             "• 👥 <b>Grupos e canais</b>: onde o bot está e se ele tem as permissões certas\n"
-            "• 🗂 <b>Acervo</b>: fotos e vídeos postados sozinhos, em ordem ou aleatório <i>(em breve)</i>\n"
-            "• 🔁 <b>Mensagens repetidas</b>: posts programados, sem limite <i>(em breve)</i>\n"
-            "• 🚫 <b>Palavras proibidas</b>: censura no chat com punição <i>(em breve)</i>\n"
+            "• 🗂 <b>Acervo</b>: você posta fotos e vídeos num canal e o bot publica sozinho\n"
+            "• 🔁 <b>Mensagens repetidas</b>: mensagens programadas, sem limite\n"
+            "• 🚫 <b>Palavras proibidas</b>: censura no chat, com a punição que você escolher\n"
             "• 👮 <b>Admins do bot</b>: quem mais pode usar este painel")
     if problems:
         text += f"\n\n⚠️ {problems} grupo(s)/canal(is) com permissão faltando. Veja em 👥 Grupos e canais."
     return text, kb([cbtn(f"👥 Grupos e canais ({len(chats)})", "chats")],
-                    [cbtn("🗂 Acervo", "soon", "acervo"), cbtn("🔁 Mensagens repetidas", "soon", "rep")],
-                    [cbtn("🚫 Palavras proibidas", "soon", "words"), cbtn("👮 Admins do bot", "admins")],
+                    [cbtn("🗂 Acervo", "acv"), cbtn("🔁 Mensagens repetidas", "schs", "msg")],
+                    [cbtn("🚫 Palavras proibidas", "words"), cbtn("👮 Admins do bot", "admins")],
                     [cbtn("❓ Ajuda", "help")])
 
 
@@ -194,7 +192,11 @@ def screen_help(child: ChildBot, manager: BotManager) -> Screen:
             "<b>Outra pessoa da equipe usar o painel:</b> 👮 Admins do bot → ➕ Adicionar admin.\n"
             "<b>Desligar, trocar token ou remover o bot:</b> no "
             f'<a href="{mae_link(manager, "bots")}">bot principal</a>, em 🤖 Meus bots.\n\n'
-            "Comandos: /start · /id · /ajuda · /cancelar")
+            "<b>Acervo:</b> 🗂 Acervo → escolha o canal de origem, poste as mídias lá e crie uma programação "
+            "em ⏱ Programações (destinos + de quanto em quanto tempo) e ative.\n"
+            "<b>Mensagens repetidas:</b> ➕ Adicionar → ✍️ Personalizar → 📍 Destinos → ▶️ Ativar.\n"
+            "<b>Palavras proibidas:</b> escolha o grupo, a punição e adicione as palavras.\n\n"
+            "Comandos: /start · /status · /pausar · /retomar · /proxima · /id · /ajuda · /cancelar")
     return text, kb([cbtn("« Painel", "home")])
 
 
@@ -239,6 +241,61 @@ async def cancel(message: Message, state: FSMContext, child: ChildBot, db: Datab
         await send(message, await screen_home(child, db))
 
 
+@router.message(Command("status", "pausar", "retomar", "proxima"), F.chat.type == ChatType.PRIVATE)
+async def cmd_acervo(message: Message, bot: Bot, child: ChildBot, db: Database, settings) -> None:
+    if not await repo.is_child_admin(db, child, message.from_user.id):
+        return
+    cmd = message.text.split()[0].lstrip("/").split("@")[0].lower()
+    acv = await get_acervo(db, child.id)
+    if cmd in ("pausar", "retomar"):
+        async with db.session() as s:
+            from ..db import Acervo
+            row = await s.get(Acervo, acv.id)
+            row.paused = cmd == "pausar"
+            await s.commit()
+        await message.answer("⏸ Acervo pausado." if cmd == "pausar" else "▶️ Acervo retomado.")
+        return
+    if cmd == "proxima":
+        from ..db import Schedule
+        async with db.session() as s:
+            ids = list(await s.scalars(select(Schedule.id).where(Schedule.child_id == child.id, Schedule.kind == "acervo",
+                                                                 Schedule.enabled.is_(True))))
+        if not ids:
+            await message.answer("Nenhuma programação do acervo ativa. Crie em 🗂 Acervo → ⏱ Programações.")
+            return
+        total = 0
+        for sid in ids:
+            sent, _ = await run_schedule(bot, db, settings, sid, force=True)
+            total += sent
+        await message.answer(f"🚀 Publiquei a próxima do acervo em {total} destino(s).")
+        return
+    await send(message, await acervo.screen_acervo(child, db, settings))
+
+
+@router.message(StateFilter(ChildFlow.input), F.chat.type == ChatType.PRIVATE)
+async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: Database, settings) -> None:
+    if not await repo.is_child_admin(db, child, message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    kind = data.get("kind", "")
+    if kind.startswith("acv_"):
+        result = await acervo.handle_input(kind, message, child, db, settings)
+    elif kind.startswith(("sch_", "msg_")):
+        result = await schedules.handle_input(kind, data, message, child, db, settings)
+    elif kind.startswith("words_"):
+        result = await words.handle_input(kind, data, message, child, db)
+    else:
+        await state.clear()
+        return
+    if isinstance(result, str):  # erro: continua esperando
+        await message.answer(result)
+        return
+    await state.clear()
+    await message.answer("✅ Salvo.")
+    await send(message, result)
+
+
 @router.message(StateFilter(ChildFlow.add_admin), F.chat.type == ChatType.PRIVATE)
 async def add_admin(message: Message, state: FSMContext, child: ChildBot, db: Database) -> None:
     if message.from_user.id != child.owner_id:
@@ -265,7 +322,7 @@ async def add_admin(message: Message, state: FSMContext, child: ChildBot, db: Da
 
 # ---------- botões do painel ----------
 
-@router.callback_query(CP.filter())
+@router.callback_query(CP.filter(F.s.in_({"home", "soon", "help", "chats", "chat", "admins"})))
 async def on_panel(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot: Bot, child: ChildBot,
                    db: Database, manager: BotManager) -> None:
     uid, s_, a, i = cb.from_user.id, callback_data.s, callback_data.a, callback_data.i
@@ -412,3 +469,7 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
         text = (f"⚠️ O @{escape(child.username)} está no {kind} <b>{title}</b>, mas falta: {', '.join(missing)}.\n"
                 f"No {kind} → Administradores → @{escape(child.username)} → ligue o que falta.")
     await _tell_owner(bot, manager, child, text)
+
+
+# as telas de acervo, programações e palavras ficam em arquivos próprios (vêm depois dos comandos acima)
+router.include_routers(schedules.router, acervo.router, words.router)

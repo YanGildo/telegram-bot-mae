@@ -111,6 +111,139 @@ class ProcessedUpdate(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+# ---------- acervo ----------
+
+class Acervo(Base):
+    """Configuração do acervo de um bot filho (um por bot)."""
+
+    __tablename__ = "acervos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), unique=True)
+    source_chat_id: Mapped[int | None] = mapped_column(BigInteger)  # canal de origem
+    max_items: Mapped[int] = mapped_column(Integer, default=100)  # 0 = sem limite
+    full_mode: Mapped[str] = mapped_column(String(8), default="rotate")  # rotate | lock
+    order_mode: Mapped[str] = mapped_column(String(8), default="random")  # random | seq
+    at_end: Mapped[str] = mapped_column(String(8), default="restart")  # restart | stop (sequencial)
+    cursor: Mapped[int] = mapped_column(Integer, default=0)  # último seq postado (sequencial)
+    last_item_id: Mapped[int | None] = mapped_column(Integer)
+    caption_mode: Mapped[str] = mapped_column(String(8), default="original")  # original | fixed | random | none
+    fixed_text: Mapped[str] = mapped_column(Text, default="")
+    random_texts: Mapped[str] = mapped_column(Text, default="")  # separados por linha com ---
+    footer_text: Mapped[str] = mapped_column(Text, default="")  # texto universal, sempre no fim
+    buttons: Mapped[str] = mapped_column(Text, default="")  # formato "Texto - link", " | " na mesma linha
+    caption_above: Mapped[bool] = mapped_column(Boolean, default=False)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    lock_warned: Mapped[bool] = mapped_column(Boolean, default=False)
+    seq_counter: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AcervoItem(Base):
+    """Um post do acervo: uma foto, um vídeo ou um álbum."""
+
+    __tablename__ = "acervo_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)  # ordem de chegada
+    media_group_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    source_message_id: Mapped[int | None] = mapped_column(Integer)
+    caption_html: Mapped[str] = mapped_column(Text, default="")
+    media: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{"t": "photo"|"video", "f": file_id}]
+    state: Mapped[str] = mapped_column(String(10), default="active")  # active | archived | removed
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ---------- programações (acervo e mensagens repetidas) ----------
+
+class Schedule(Base):
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(8))  # acervo | msg
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_time: Mapped[str] = mapped_column(String(5), default="00:00")  # cronograma (alinhamento)
+    trigger: Mapped[str] = mapped_column(String(8), default="time")  # time | msgs
+    interval_min: Mapped[int] = mapped_column(Integer, default=60)
+    every_msgs: Mapped[int] = mapped_column(Integer, default=50)
+    weekdays: Mapped[int] = mapped_column(Integer, default=127)  # bit 0 = segunda
+    window_start: Mapped[int] = mapped_column(Integer, default=0)  # minutos do dia
+    window_end: Mapped[int] = mapped_column(Integer, default=1440)
+    start_date: Mapped[str | None] = mapped_column(String(10))  # AAAA-MM-DD
+    end_date: Mapped[str | None] = mapped_column(String(10))
+    max_per_day: Mapped[int] = mapped_column(Integer, default=0)  # 0 = sem limite
+    posts_day: Mapped[str | None] = mapped_column(String(10))
+    posts_today: Mapped[int] = mapped_column(Integer, default=0)
+    pin: Mapped[int] = mapped_column(Integer, default=0)  # 0 não · 1 fixa sem notificar · 2 fixa notificando
+    delete_prev: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_delete_min: Mapped[int] = mapped_column(Integer, default=0)
+    # conteúdo (só mensagens repetidas)
+    text_html: Mapped[str] = mapped_column(Text, default="")
+    media: Mapped[str] = mapped_column(Text, default="[]")
+    buttons: Mapped[str] = mapped_column(Text, default="")
+    caption_above: Mapped[bool] = mapped_column(Boolean, default=False)  # mídia abaixo do texto
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScheduleDest(Base):
+    __tablename__ = "schedule_dests"
+    __table_args__ = (UniqueConstraint("schedule_id", "chat_row_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schedule_id: Mapped[int] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"), index=True)
+    chat_row_id: Mapped[int] = mapped_column(ForeignKey("child_chats.id", ondelete="CASCADE"))
+    msg_counter: Mapped[int] = mapped_column(Integer, default=0)
+    last_message_ids: Mapped[str] = mapped_column(String(200), default="")
+
+
+class PendingDelete(Base):
+    """Mensagem que o bot vai apagar mais tarde (exclusão automática, avisos)."""
+
+    __tablename__ = "pending_deletes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(Integer, index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_ids: Mapped[str] = mapped_column(String(200))
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+# ---------- palavras proibidas ----------
+
+class WordFilter(Base):
+    __tablename__ = "word_filters"
+    __table_args__ = (UniqueConstraint("child_id", "chat_row_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), index=True)
+    chat_row_id: Mapped[int] = mapped_column(ForeignKey("child_chats.id", ondelete="CASCADE"))
+    action: Mapped[str] = mapped_column(String(8), default="off")  # off | warn | kick | mute | ban
+    delete: Mapped[bool] = mapped_column(Boolean, default=True)
+    duration_min: Mapped[int] = mapped_column(Integer, default=0)  # silenciar/ban: 0 = para sempre
+    warn_limit: Mapped[int] = mapped_column(Integer, default=3)
+    warn_then: Mapped[str] = mapped_column(String(8), default="mute")  # mute | kick | ban
+    match: Mapped[str] = mapped_column(String(8), default="contains")  # contains | exact
+    words: Mapped[str] = mapped_column(Text, default="")  # uma por linha
+
+
+class WarnCount(Base):
+    __tablename__ = "warnings"
+    __table_args__ = (UniqueConstraint("child_id", "chat_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(Integer)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 def _add_missing_columns(conn) -> None:
     """Atualiza tabelas de versões antigas: cria as colunas novas que faltam (sempre opcionais)."""
     insp = inspect(conn)

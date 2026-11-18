@@ -1,4 +1,4 @@
-# Bot Mãe — versão 2 (Etapa 1: base)
+# Bot Mãe — versão 3 (Etapas 1 a 4)
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -19,7 +19,27 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 - 👥 Grupos e canais: botões de adicionar que já abrem com as permissões certas, lista com ✅ / ⚠️ / ❌, verificar permissões, detalhe de cada grupo e "tirar o bot daqui"
 - Só o dono e os admins do bot podem colocar o bot em grupos; se outra pessoa tentar, ele sai na hora e avisa
 - 👮 Admins do bot: o dono adiciona ou tira pessoas pelo ID
-- Telas de Acervo, Mensagens repetidas e Palavras proibidas já explicam o que vem (próximas etapas)
+- Cada tela explica o que cada botão faz
+- Comandos no privado do filho: /status · /pausar · /retomar · /proxima · /id · /ajuda · /cancelar
+
+**🗂 Acervo**
+- Canal de origem: tudo que você posta lá (foto, vídeo ou álbum) entra sozinho no acervo; editar a legenda no canal atualiza no acervo
+- Limite (25, 50, 100, 200, 500 ou sem limite): **rotativo** (a nova entra e a mais antiga sai) ou **travado** (avisa que lotou)
+- Ordem **aleatória** (nunca repete a última e só repete depois de usar todas) ou **sequencial** (recomeça ou para no fim)
+- Legenda: original, fixa, sorteada de uma lista ou nenhuma + texto universal no fim + botões de link + mídia abaixo do texto; 👀 prévia
+- 🗂 Ver mídias (tira da fila sem apagar do canal) · 🧹 Zerar (só contam as novas) · ♻️ Restaurar · ⏸ Pausar
+- ⏱ Programações do acervo: quantas quiser, cada uma com destinos e ritmo próprios
+
+**🔁 Mensagens repetidas** (sem limite, telas como as do Group Help)
+- ✍️ Personalizar: texto (com formatação e emoji premium), foto/vídeo/álbum, botões de link, mídia abaixo do texto, 👀 visualização
+- Cronograma, repetição (a cada X minutos/horas ou a cada N mensagens no grupo), dias da semana, horário permitido, período (data início/fim), máximo por dia
+- Fixar (com ou sem notificar), apagar a anterior, exclusão automática, destinos, 🚀 enviar agora
+- O mesmo agendador roda as programações do acervo
+
+**🚫 Palavras proibidas** (por grupo, sem limite de palavras)
+- Punição: desativado, advertência (1 a 5, depois silencia/kick/ban), kick, silenciar, ban; duração (1 h a 30 dias ou para sempre)
+- Apagar a mensagem ou não; busca "contém" ou "palavra exata"; ignora acentos e maiúsculas; frases também
+- Admins do grupo e do bot nunca são punidos; o aviso no grupo some sozinho em 1 minuto
 - /id mostra o seu ID e o do grupo
 
 ## Instalar no servidor (mesmo droplet do bot de clipes)
@@ -48,7 +68,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "62/62 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "104/104 passaram" ou mais.
 
 ## Arquivos
 
@@ -64,6 +84,11 @@ app/
   ui.py              botões e telas
   mother/handlers.py telas do bot mãe
   child/handlers.py  painel do bot filho
+  child/acervo.py    acervo (canal de origem, limite, legenda)
+  child/schedules.py telas das programações e mensagens repetidas
+  child/scheduling.py agendador (próximo envio, publicar, exclusão automática)
+  child/words.py     palavras proibidas
+  child/content.py   montar e enviar posts (mídias e botões)
 servidor/            instalar.sh e atualizar.sh
 docs/PLANO.md        plano completo
 ```
