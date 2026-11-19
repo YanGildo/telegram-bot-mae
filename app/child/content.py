@@ -7,7 +7,8 @@ import re
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo
+from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument, InputMediaPhoto,
+                           InputMediaVideo)
 
 BUTTONS_ONLY_TEXT = "⠀"  # invisível: mensagem que só leva os botões embaixo de um álbum
 TAG_RE = re.compile(r"<[^>]+>")
@@ -73,17 +74,26 @@ def buttons_markup(stored: str) -> InlineKeyboardMarkup | None:
 def load_media(raw: str) -> list[dict]:
     try:
         data = json.loads(raw or "[]")
-        return [m for m in data if m.get("t") in ("photo", "video") and m.get("f")]
+        return [m for m in data if m.get("t") in ("photo", "video", "doc") and m.get("f")]
     except ValueError:
         return []
 
 
 def media_from_message(message) -> dict | None:
+    """Guarda a referência do arquivo do Telegram. Reenviar pela referência não recomprime nada:
+    sai exatamente o mesmo arquivo (foto na maior resolução, vídeo e arquivo originais)."""
     if message.photo:
-        return {"t": "photo", "f": message.photo[-1].file_id}
+        p = message.photo[-1]
+        return {"t": "photo", "f": p.file_id, "u": p.file_unique_id}
     if message.video:
-        return {"t": "video", "f": message.video.file_id}
+        return {"t": "video", "f": message.video.file_id, "u": message.video.file_unique_id}
+    if message.document:  # foto/vídeo mandado como arquivo: qualidade original, sem compressão
+        return {"t": "doc", "f": message.document.file_id, "u": message.document.file_unique_id}
     return None
+
+
+def unique_ids(media: list[dict]) -> set[str]:
+    return {m["u"] for m in media if m.get("u")}
 
 
 def media_summary(media: list[dict]) -> str:
@@ -91,7 +101,7 @@ def media_summary(media: list[dict]) -> str:
         return "sem mídia"
     if len(media) > 1:
         return f"álbum com {len(media)}"
-    return "foto" if media[0]["t"] == "photo" else "vídeo"
+    return {"photo": "foto", "video": "vídeo", "doc": "arquivo"}[media[0]["t"]]
 
 
 def media_icon(media: list[dict]) -> str:
@@ -99,6 +109,8 @@ def media_icon(media: list[dict]) -> str:
         return "📚"
     if media and media[0]["t"] == "video":
         return "🎬"
+    if media and media[0]["t"] == "doc":
+        return "📎"
     return "🖼"
 
 
@@ -133,18 +145,37 @@ async def _send(bot: Bot, chat_id: int, text: str, media: list[dict], markup, ab
     ids: list[int] = []
     if len(media) == 1:
         m0 = media[0]
-        send = bot.send_photo if m0["t"] == "photo" else bot.send_video
-        msg = await send(chat_id, m0["f"], caption=caption, show_caption_above_media=above if caption else None,
-                         reply_markup=None if long_text else markup)
+        if m0["t"] == "doc":
+            msg = await bot.send_document(chat_id, m0["f"], caption=caption, reply_markup=None if long_text else markup)
+        else:
+            send = bot.send_photo if m0["t"] == "photo" else bot.send_video
+            msg = await send(chat_id, m0["f"], caption=caption, show_caption_above_media=above if caption else None,
+                             reply_markup=None if long_text else markup)
         ids.append(msg.message_id)
     else:
-        items = []
-        for n, m in enumerate(media[:10]):
-            c = caption if n == 0 else None
-            kw = {"caption": c, "show_caption_above_media": above if c else None}
-            items.append(InputMediaPhoto(media=m["f"], **kw) if m["t"] == "photo" else InputMediaVideo(media=m["f"], **kw))
-        msgs = await bot.send_media_group(chat_id, items)
-        ids += [x.message_id for x in msgs]
+        # o Telegram não mistura arquivo com foto/vídeo no mesmo álbum: separa em dois se precisar
+        docs = [m for m in media[:10] if m["t"] == "doc"]
+        visual = [m for m in media[:10] if m["t"] != "doc"]
+        first = True
+        for group in (visual, docs):
+            if not group:
+                continue
+            items = []
+            for m in group:
+                c = caption if first else None
+                first = False
+                if m["t"] == "doc":
+                    items.append(InputMediaDocument(media=m["f"], caption=c))
+                    continue
+                kw = {"caption": c, "show_caption_above_media": above if c else None}
+                items.append(InputMediaPhoto(media=m["f"], **kw) if m["t"] == "photo" else InputMediaVideo(media=m["f"], **kw))
+            if len(items) == 1:  # sobrou um só: manda sozinho
+                single = group[0]
+                one = await _send(bot, chat_id, items[0].caption or "", [single], None, above)
+                ids += one
+            else:
+                msgs = await bot.send_media_group(chat_id, items)
+                ids += [x.message_id for x in msgs]
     if long_text:
         m = await bot.send_message(chat_id, text, reply_markup=markup)
         ids.append(m.message_id)

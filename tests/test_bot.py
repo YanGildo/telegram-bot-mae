@@ -15,7 +15,8 @@ from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.exceptions import TelegramUnauthorizedError  # noqa: E402
 from aiogram.methods import (BanChatMember, DeleteMessage, DeleteMessages, DeleteWebhook,  # noqa: E402
                              EditMessageText, GetChatAdministrators, GetChatMember, GetMe, GetUpdates, LeaveChat,
-                             PinChatMessage, RestrictChatMember, SendMediaGroup, SendMessage, SendPhoto, SendVideo,
+                             PinChatMessage, RestrictChatMember, SendDocument, SendMediaGroup, SendMessage, SendPhoto,
+                             SendVideo,
                              SetMyCommands)
 from aiogram.types import (CallbackQuery, Chat, ChatMemberAdministrator, ChatMemberLeft, ChatMemberMember,  # noqa: E402
                            ChatMemberUpdated, Message, MessageEntity, PhotoSize, Update, User, Video)
@@ -78,7 +79,7 @@ class FakeSession(BaseSession):
                            text=method.text)
         if isinstance(method, GetChatMember):
             return admin_member(BOTS[key], restrict=self.restrict)
-        if isinstance(method, (SendPhoto, SendVideo)):
+        if isinstance(method, (SendPhoto, SendVideo, SendDocument)):
             self.n += 1
             return Message(message_id=self.n, date=NOW, chat=Chat(id=method.chat_id, type="supergroup"))
         if isinstance(method, SendMediaGroup):
@@ -593,6 +594,78 @@ async def main():
     await csay(OWNER, "promo")
     calls = await csay(BIA, "promo", chat=ANA_G)
     check("palavras: remover da lista", not any(isinstance(m, (RestrictChatMember, BanChatMember)) for _, m in calls))
+
+    # ================= v4 =================
+    from app.child.acervo import split_existing_albums
+    # mesma mídia não entra duas vezes; arquivo (qualidade original) entra
+    from aiogram.types import Document
+    async with db.session() as s:
+        before = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))))
+    await chan_post(photo=photo("depois"))
+    await chan_post(document=Document(file_id="d1", file_unique_id="d1u", file_name="foto.jpg", mime_type="image/jpeg"))
+    async with db.session() as s:
+        acts = [x.media for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))]
+    check("v4: mídia repetida não duplica; arquivo original entra", len(acts) == before + 1 and any('"doc"' in x for x in acts))
+    async with db.session() as s:
+        doc_item = next(x for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id)) if '"doc"' in x.media)
+    from app.child.content import load_media as lm, send_post as sp
+    session.take()
+    await sp(cbot, -100604, "legenda", lm(doc_item.media), None)
+    check("v4: arquivo sai como arquivo (sem compressão)", any(type(m).__name__ == "SendDocument" for _, m in session.take()))
+
+    # álbuns soltos
+    async with db.session() as s:
+        n_alb = sum(1 for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))
+                    if len(lm(x.media)) > 1)
+    calls = await cclick(OWNER, CP(s="acv", a="alb").pack())
+    check("v4: tela de álbuns explica inteiros/soltos", any("Soltos" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="acv", a="setalb", i=1).pack())
+    async with db.session() as s:
+        acts = list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active")))
+    check("v4: soltos quebra os álbuns existentes", n_alb >= 1 and all(len(lm(x.media)) == 1 for x in acts)
+          and len({x.seq for x in acts}) == len(acts))
+    await chan_post(photo=photo("a1"), media_group_id="g9", caption="Álbum novo")
+    await chan_post(photo=photo("a2"), media_group_id="g9")
+    async with db.session() as s:
+        new = list(await s.scalars(select(AcervoItem).where(AcervoItem.media_group_id == "g9")))
+    check("v4: álbum novo vira posts soltos com a mesma legenda", len(new) == 2 and all(x.caption_html == "Álbum novo" for x in new))
+    await cclick(OWNER, CP(s="acv", a="setalb", i=0).pack())
+    await chan_post(photo=photo("b1"), media_group_id="g10")
+    await chan_post(photo=photo("b2"), media_group_id="g10")
+    async with db.session() as s:
+        new = list(await s.scalars(select(AcervoItem).where(AcervoItem.media_group_id == "g10")))
+    check("v4: inteiros volta a agrupar os novos", len(new) == 1 and len(lm(new[0].media)) == 2)
+
+    # retomar sem programação ativa avisa
+    async with db.session() as s:
+        for x in await s.scalars(select(Schedule).where(Schedule.child_id == c1.id, Schedule.kind == "acervo")):
+            x.enabled = False
+        await s.commit()
+    await cclick(OWNER, CP(s="acv", a="pause").pack())
+    calls = await cclick(OWNER, CP(s="acv", a="pause").pack())
+    check("v4: retomar sem programação ativa avisa", any("Nenhuma programação ativa" in m.text for m in texts(calls)))
+
+    # sem envio duplicado
+    async with db.session() as s:
+        x = await s.get(Schedule, sa.id)
+        x.enabled, x.next_run_at = True, datetime(2026, 1, 1)
+        await s.commit()
+    session.take()
+    await asyncio.gather(sched.tick(manager, now=datetime(2026, 1, 1, 0, 1)), sched.tick(manager, now=datetime(2026, 1, 1, 0, 1)))
+    posts = [m for _, m in session.take() if type(m).__name__ in ("SendPhoto", "SendMediaGroup", "SendDocument", "SendVideo")
+             and m.chat_id == -100604]
+    check("v4: dois agendadores ao mesmo tempo publicam uma vez só", len(posts) == 1)
+    r1, r2 = await asyncio.gather(sched.run_schedule(cbot, db, settings, sa.id, force=True),
+                                  sched.run_schedule(cbot, db, settings, sa.id, force=True))
+    check("v4: dois cliques em Enviar agora = um envio", sorted([r1[0], r2[0]]) == [0, 1])
+
+    # teste de emoji premium
+    await cclick(OWNER, CP(s="chats", a="emoji").pack())
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"),
+                       from_user=OWNER, text="🔥 oi", entities=[MessageEntity(type="custom_emoji", offset=0, length=2,
+                                                                                custom_emoji_id="5")]))
+    check("v4: teste de emoji premium gera relatório", any("Teste de emoji premium" in m.text and "Fragment" in m.text
+                                                          for m in texts(calls)))
 
     # ---------- reinício e token revogado ----------
     await manager.stop_all()

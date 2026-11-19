@@ -83,18 +83,24 @@ async def screen_acervo(child: ChildBot, db: Database, settings) -> Screen:
             f"🕑 Última postagem: {to_local(last, settings.tz).strftime('%d/%m %H:%M') if last else '—'}\n"
             f"🚀 Próxima: {next_text(nxt, settings.tz) if nxt else '—'}\n"
             + ("\n⏸ <b>Acervo pausado</b>: nada sai até você retomar.\n" if acv.paused else "")
+            + ("\n⚠️ <b>Nenhuma programação ativa</b>: o acervo só publica sozinho depois que você criar "
+               "e ativar uma em ⏱ Programações (destinos + de quanto em quanto tempo).\n"
+               if not any(x.enabled for x in schs) else "")
             + "\n<b>O que cada botão faz</b>\n"
             "• 📥 Canal de origem: o canal onde você joga as mídias.\n"
             "• 🔢 Limite: quantas mídias ficam na fila e o que fazer quando lotar.\n"
             "• 🔀 Ordem: aleatória ou na ordem em que você postou.\n"
             "• ✍️ Legenda e botões: texto e botões que vão em todo post do acervo.\n"
+            "• 📚 Álbuns: <i>inteiros</i> publica o álbum todo junto; <i>soltos</i> publica cada foto/vídeo "
+            "como um post separado.\n"
             "• ⏱ Programações: quando e em quais grupos/canais publicar.\n"
             "• 🗂 Ver mídias: lista e remove mídias da fila (sem apagar do canal).\n"
             "• 🧹 Zerar: tira tudo da fila; só contam as mídias postadas depois.")
     return text, kb([cbtn("📥 Canal de origem", "acv", "src")],
                     [cbtn(f"🔢 Limite: {limit_text(acv)}", "acv", "lim"),
                      cbtn("🔀 Ordem: " + ("Aleatória" if acv.order_mode == "random" else "Sequencial"), "acv", "ord")],
-                    [cbtn("✍️ Legenda e botões", "acv", "cap")],
+                    [cbtn("✍️ Legenda e botões", "acv", "cap"),
+                     cbtn("📚 Álbuns: " + ("soltos" if acv.split_albums else "inteiros"), "acv", "alb")],
                     [cbtn(f"⏱ Programações ({len(schs)})", "schs", "acervo")],
                     [cbtn(f"🗂 Ver mídias ({c['total']})", "acv", "items")],
                     [cbtn("🧹 Zerar acervo", "acv", "reset"),
@@ -113,7 +119,9 @@ async def screen_source(child: ChildBot, db: Database) -> Screen:
             "Depois é só postar fotos, vídeos ou álbuns lá: cada post entra no acervo sozinho. "
             "O que já estava no canal antes não entra (o Telegram não deixa o bot ler o histórico): "
             "para incluir, encaminhe de novo para o canal.\n\n"
-            "Só foto e vídeo entram. Texto sozinho, GIF e arquivo são ignorados.")
+            "Entram fotos, vídeos e arquivos. Para manter a <b>qualidade original</b> (sem a compressão do "
+            "Telegram), poste como <b>arquivo</b>. Texto sozinho é ignorado, e a mesma mídia postada duas vezes "
+            "só entra uma vez.")
     rows = [[cbtn(("✅ " if c.chat_id == acv.source_chat_id else "▫️ ") + (c.title or str(c.chat_id))[:40],
                   "acv", "setsrc", c.id)] for c in chans]
     if not chans:
@@ -264,6 +272,27 @@ async def on_acervo(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot
     if a == "src":
         await cb.answer()
         return await show(cb, await screen_source(child, db))
+    if a == "alb":
+        await cb.answer()
+        return await show(cb, (
+            "📚 <b>Álbuns</b>\n\n"
+            "• <b>Inteiros</b>: o álbum que você postou no canal sai inteiro, num post só.\n"
+            "• <b>Soltos</b>: cada foto/vídeo do álbum vira um post separado, com a legenda do álbum. "
+            "Rende mais posts com o mesmo material.\n\n"
+            "Ao escolher <b>Soltos</b>, os álbuns que já estão no acervo também são quebrados. "
+            "Voltar para <b>Inteiros</b> vale só para os álbuns postados depois.\n\n"
+            f"Agora: <b>{'Soltos' if acv.split_albums else 'Inteiros'}</b>",
+            kb([cbtn(("✅ " if not acv.split_albums else "") + "📚 Inteiros", "acv", "setalb", 0),
+                cbtn(("✅ " if acv.split_albums else "") + "🧩 Soltos", "acv", "setalb", 1)],
+               [cbtn("« Acervo", "acv")])))
+    if a == "setalb":
+        if i == 1 and not acv.split_albums:
+            await save(split_albums=True)
+            n = await split_existing_albums(db, child.id)
+            note = f"Álbuns soltos. {n} mídia(s) viraram posts separados." if n else "Álbuns soltos."
+        elif i == 0:
+            await save(split_albums=False)
+            note = "Álbuns inteiros (para os próximos que você postar)."
     if a == "setsrc":
         async with db.session() as s:
             c = await s.get(ChildChat, i)
@@ -355,6 +384,14 @@ async def on_acervo(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot
     elif a == "pause":
         await save(paused=not acv.paused)
         note = "Acervo retomado." if acv.paused else "Acervo pausado."
+        if acv.paused:
+            async with db.session() as s:
+                active = await s.scalar(select(Schedule.id).where(Schedule.child_id == child.id,
+                                                                  Schedule.kind == "acervo", Schedule.enabled.is_(True)))
+            if active is None:
+                await cb.answer("Acervo retomado, mas nada vai sair ainda: crie e ative uma programação em "
+                                "⏱ Programações.", show_alert=True)
+                return await show(cb, await screen_acervo(child, db, settings))
     await cb.answer(note)
     await show(cb, await screen_acervo(child, db, settings))
 
@@ -374,7 +411,7 @@ async def _apply_limit(db: Database, child_id: int) -> None:
 
 # ---------- captura no canal de origem ----------
 
-@router.channel_post(F.photo | F.video)
+@router.channel_post(F.photo | F.video | F.document)
 async def capture(message: Message, bot: Bot, child: ChildBot, db: Database) -> None:
     acv = await get_acervo(db, child.id)
     if acv.source_chat_id != message.chat.id:
@@ -383,14 +420,19 @@ async def capture(message: Message, bot: Bot, child: ChildBot, db: Database) -> 
     if m is None:
         return
     cap = message.html_text if message.caption else ""
-    warn = False
+    group = message.media_group_id
     async with db.session() as s:
         row = await s.get(Acervo, acv.id)
-        item = None
-        if message.media_group_id:
-            item = await s.scalar(select(AcervoItem).where(AcervoItem.child_id == child.id,
-                                                           AcervoItem.media_group_id == message.media_group_id))
-        if item is not None:  # mais uma mídia do mesmo álbum
+        # a mesma mídia postada de novo não entra duas vezes
+        if m.get("u") and await s.scalar(select(AcervoItem.id).where(
+                AcervoItem.child_id == child.id, AcervoItem.state == "active",
+                AcervoItem.media.contains(f'"u": "{m["u"]}"'))):
+            logger.info("Acervo do @%s: mídia repetida ignorada", child.username)
+            return
+        siblings = list(await s.scalars(select(AcervoItem).where(
+            AcervoItem.child_id == child.id, AcervoItem.media_group_id == group))) if group else []
+        if siblings and not row.split_albums:  # mais uma mídia do mesmo álbum
+            item = siblings[0]
             media = load_media(item.media)
             if len(media) < 10:
                 media.append(m)
@@ -399,6 +441,13 @@ async def capture(message: Message, bot: Bot, child: ChildBot, db: Database) -> 
                 item.caption_html = cap
             await s.commit()
             return
+        if siblings:  # álbum quebrado: cada mídia vira um post, todas com a legenda do álbum
+            if cap:
+                for sib in siblings:
+                    if not sib.caption_html:
+                        sib.caption_html = cap
+            else:
+                cap = next((x.caption_html for x in siblings if x.caption_html), "")
         active = await s.scalar(select(func.count(AcervoItem.id)).where(
             AcervoItem.child_id == child.id, AcervoItem.state == "active")) or 0
         if row.max_items and active >= row.max_items:
@@ -417,10 +466,40 @@ async def capture(message: Message, bot: Bot, child: ChildBot, db: Database) -> 
             for o in oldest:
                 o.state = "removed"
         row.seq_counter += 1
-        s.add(AcervoItem(child_id=child.id, seq=row.seq_counter, media_group_id=message.media_group_id,
+        s.add(AcervoItem(child_id=child.id, seq=row.seq_counter, media_group_id=group,
                          source_message_id=message.message_id, caption_html=cap, media=json.dumps([m])))
         await s.commit()
-    logger.info("Acervo do @%s: nova mídia #%s", child.username, acv.seq_counter + 1)
+        n = row.seq_counter
+    logger.info("Acervo do @%s: nova mídia #%s", child.username, n)
+
+
+async def split_existing_albums(db: Database, child_id: int) -> int:
+    """Quebra os álbuns que já estão no acervo em posts soltos, mantendo a ordem."""
+    async with db.session() as s:
+        acv = await s.scalar(select(Acervo).where(Acervo.child_id == child_id))
+        items = list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == child_id)
+                                     .order_by(AcervoItem.seq)))
+        seq, created, cursor = 0, 0, acv.cursor
+        new_cursor = 0
+        for it in items:
+            media = load_media(it.media)
+            seq += 1
+            if it.seq <= cursor:
+                new_cursor = seq + (len(media) - 1 if it.state == "active" else 0)
+            it.seq = seq
+            if it.state != "active" or len(media) < 2:
+                continue
+            it.media = json.dumps(media[:1])
+            for extra in media[1:]:
+                seq += 1
+                s.add(AcervoItem(child_id=child_id, seq=seq, media_group_id=it.media_group_id,
+                                 source_message_id=it.source_message_id, caption_html=it.caption_html,
+                                 media=json.dumps([extra]), used_count=it.used_count))
+                created += 1
+        acv.seq_counter, acv.cursor = seq, new_cursor
+        await s.commit()
+    await _apply_limit(db, child_id)
+    return created
 
 
 @router.edited_channel_post()

@@ -13,12 +13,13 @@ from datetime import date, datetime, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..db import (Acervo, AcervoItem, ChildChat, Database, PendingDelete, Schedule, ScheduleDest, utcnow)
 from .content import buttons_markup, load_media, random_text, send_post
 
 logger = logging.getLogger(__name__)
+_running: set[int] = set()  # programações sendo enviadas agora (evita dois envios ao mesmo tempo)
 
 WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 MIN_INTERVAL = 5  # minutos
@@ -201,6 +202,17 @@ async def pick_item(db: Database, child_id: int) -> tuple[AcervoItem | None, str
 
 async def run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat_row: int | None = None,
                        force: bool = False) -> tuple[int, str]:
+    if sch_id in _running:
+        return 0, "já está enviando"
+    _running.add(sch_id)
+    try:
+        return await _run_schedule(bot, db, settings, sch_id, only_chat_row, force)
+    finally:
+        _running.discard(sch_id)
+
+
+async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat_row: int | None,
+                        force: bool) -> tuple[int, str]:
     tz = settings.tz
     async with db.session() as s:
         sch = await s.get(Schedule, sch_id)
@@ -322,10 +334,12 @@ async def tick(manager, now: datetime | None = None) -> int:
             if manager.bot_for(sch.child_id) is None:
                 continue
             nxt = compute_next(sch, to_local(now_utc, settings.tz))  # grava antes de postar
-            sch.next_run_at = to_utc(nxt) if nxt else None
-            if nxt is None:
-                sch.enabled = False
-            runnable.append(sch.id)
+            # só roda quem conseguir "pegar" o horário: se dois processos lerem o mesmo, só um ganha
+            res = await s.execute(update(Schedule).where(Schedule.id == sch.id, Schedule.next_run_at == sch.next_run_at)
+                                  .values(next_run_at=to_utc(nxt) if nxt else None, enabled=nxt is not None)
+                                  .execution_options(synchronize_session=False))
+            if res.rowcount == 1:
+                runnable.append(sch.id)
         await s.commit()
         deletes = list(await s.scalars(select(PendingDelete).where(PendingDelete.due_at <= now_utc)))
         for p in deletes:

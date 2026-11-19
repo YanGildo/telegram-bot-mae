@@ -189,9 +189,17 @@ async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
              if c.chat_id != acv.source_chat_id and c.bot_status in ("administrator", "creator")]
     async with db.session() as s:
         chosen = set(await s.scalars(select(ScheduleDest.chat_row_id).where(ScheduleDest.schedule_id == sch.id)))
+        others = set(await s.scalars(select(ScheduleDest.chat_row_id).join(
+            Schedule, Schedule.id == ScheduleDest.schedule_id).where(
+            Schedule.child_id == child.id, Schedule.kind == sch.kind, Schedule.enabled.is_(True),
+            Schedule.id != sch.id)))
     text = ("📍 <b>Destinos</b>\n\nToque para escolher em quais grupos e canais esta programação publica. "
             "Só aparecem os lugares onde o bot é administrador (o canal de origem do acervo não aparece).")
-    rows = [[cbtn(("✅ " if c.id in chosen else "▫️ ") + ("📢 " if c.type == ChatType.CHANNEL else "👥 ")
+    if chosen & others:
+        text += ("\n\n⚠️ Marcado com 🔁: outra programação ativa também publica ali. Se não quer posts "
+                 "em dobro, tire de uma delas.")
+    rows = [[cbtn(("✅ " if c.id in chosen else "▫️ ") + ("🔁 " if c.id in others and c.id in chosen else "")
+                  + ("📢 " if c.type == ChatType.CHANNEL else "👥 ")
                   + (c.title or str(c.chat_id))[:40], "sch", "dsttog", sch.id, j=c.id)] for c in chats]
     if not chats:
         text += "\n\n<i>Nenhum grupo ou canal ainda. Use 👥 Grupos e canais no painel.</i>"

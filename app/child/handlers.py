@@ -139,7 +139,8 @@ async def screen_chats(child: ChildBot, db: Database) -> Screen:
     rows = [[url("➕ Adicionar a um grupo", f"https://t.me/{u}?startgroup=painel&admin={GROUP_RIGHTS}")],
             [url("➕ Adicionar a um canal", f"https://t.me/{u}?startchannel=true&admin={CHANNEL_RIGHTS}")]]
     rows += [[cbtn(f"{chat_icon(c)} {(c.title or str(c.chat_id))[:40]}", "chat", i=c.id)] for c in chats]
-    rows += [[cbtn("🔄 Verificar permissões", "chats", "check")], [cbtn("« Painel", "home")]]
+    rows += [[cbtn("🔄 Verificar permissões", "chats", "check")],
+             [cbtn("🧪 Testar emoji premium", "chats", "emoji")], [cbtn("« Painel", "home")]]
     return "\n".join(lines), kb(*rows)
 
 
@@ -204,6 +205,30 @@ def public_text(child: ChildBot, manager: BotManager) -> str:
     return (f"🤖 Olá! Eu sou o <b>{escape(child.name)}</b> e ajudo a cuidar de grupos e canais do Telegram.\n\n"
             "Só os administradores usam o meu painel.\n\n"
             f'<i>Quer um bot assim? <a href="{mae_link(manager, f"filho_{child.id}")}">Crie o seu aqui</a>.</i>')
+
+
+async def emoji_report(bot: Bot, db: Database, child: ChildBot, message: Message) -> str:
+    targets = [("Privado (você)", message.chat.id)]
+    targets += [(c.title or str(c.chat_id), c.chat_id) for c in await repo.child_chats(db, child.id)
+                if c.bot_status in ("administrator", "creator")]
+    lines = ["🧪 <b>Teste de emoji premium</b>\n"]
+    for label, chat_id in targets:
+        try:
+            sent = await bot.send_message(chat_id, message.html_text, disable_notification=True)
+            ok = any(e.type == "custom_emoji" for e in (sent.entities or []))
+            try:
+                await bot.delete_message(chat_id, sent.message_id)
+            except (TelegramBadRequest, TelegramForbiddenError):
+                pass
+            lines.append(f"{'✅' if ok else '❌'} {escape(label)}" + ("" if ok else " — sai como emoji comum"))
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            lines.append(f"⚠️ {escape(label)} — {escape(e.message)}")
+    lines.append(f"\nO bot guarda e manda o emoji premium sempre. Quem decide se aparece é o Telegram:\n"
+                 f"• <b>Privado e grupos</b>: precisa que a conta que criou o @{escape(child.username)} no "
+                 "@BotFather tenha Telegram Premium ativo.\n"
+                 "• <b>Canais</b>: só aparece se o bot tiver um @username comprado no Fragment.\n"
+                 "Quando não dá, o Telegram mostra o emoji comum no lugar (o post sai normalmente).")
+    return "\n".join(lines)
 
 
 # ---------- comandos no privado ----------
@@ -279,6 +304,14 @@ async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: 
         return
     data = await state.get_data()
     kind = data.get("kind", "")
+    if kind == "emoji_test":
+        if not any(e.type == "custom_emoji" for e in (message.entities or [])):
+            await message.answer("Essa mensagem não tem emoji premium. Mande de uma conta com Telegram Premium, "
+                                 "ou /cancelar.")
+            return
+        await state.clear()
+        await message.answer(await emoji_report(message.bot, db, child, message))
+        return
     if kind.startswith("acv_"):
         result = await acervo.handle_input(kind, message, child, db, settings)
     elif kind.startswith(("sch_", "msg_")):
@@ -341,6 +374,11 @@ async def on_panel(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot:
     elif s_ == "help":
         await cb.answer()
         await show(cb, screen_help(child, manager))
+    elif s_ == "chats" and a == "emoji":
+        from .flow import ask
+        await ask(cb, state, "emoji_test", "🧪 <b>Testar emoji premium</b>\n\nMande aqui uma mensagem com um ou mais "
+                  "emoji premium. Vou postar em cada grupo e canal (sem notificar) e apagar na hora, "
+                  "e te digo onde o emoji premium aparece.", cbtn("❌ Cancelar", "chats"))
     elif s_ == "chats":
         if a == "check":
             n = await refresh_rights(bot, db, child)

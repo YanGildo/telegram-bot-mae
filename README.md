@@ -1,4 +1,4 @@
-# Bot Mãe — versão 3 (Etapas 1 a 4)
+# Bot Mãe — versão 4 (Etapas 1 a 4)
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -29,6 +29,11 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 - Legenda: original, fixa, sorteada de uma lista ou nenhuma + texto universal no fim + botões de link + mídia abaixo do texto; 👀 prévia
 - 🗂 Ver mídias (tira da fila sem apagar do canal) · 🧹 Zerar (só contam as novas) · ♻️ Restaurar · ⏸ Pausar
 - ⏱ Programações do acervo: quantas quiser, cada uma com destinos e ritmo próprios
+- 📚 Álbuns **inteiros** (o álbum sai junto) ou **soltos** (cada foto/vídeo vira um post, com a legenda do álbum)
+- Qualidade original: o bot reenvia o mesmo arquivo do Telegram, sem recomprimir. Para escapar da compressão do próprio Telegram, poste no canal como **arquivo**
+- A mesma mídia postada duas vezes só entra uma vez
+- Sem envio duplicado: cada horário só é publicado uma vez, mesmo com dois cliques em Enviar agora; nos destinos, 🔁 avisa quando outra programação ativa publica no mesmo lugar
+- Aviso quando o acervo está retomado mas não tem programação ativa
 
 **🔁 Mensagens repetidas** (sem limite, telas como as do Group Help)
 - ✍️ Personalizar: texto (com formatação e emoji premium), foto/vídeo/álbum, botões de link, mídia abaixo do texto, 👀 visualização
@@ -41,6 +46,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 - Apagar a mensagem ou não; busca "contém" ou "palavra exata"; ignora acentos e maiúsculas; frases também
 - Admins do grupo e do bot nunca são punidos; o aviso no grupo some sozinho em 1 minuto
 - /id mostra o seu ID e o do grupo
+- 🧪 Testar emoji premium (em 👥 Grupos e canais): mostra onde o emoji premium aparece e onde vira emoji comum
 
 ## Instalar no servidor (mesmo droplet do bot de clipes)
 
@@ -68,7 +74,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "104/104 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "114/114 passaram" ou mais.
 
 ## Arquivos
 

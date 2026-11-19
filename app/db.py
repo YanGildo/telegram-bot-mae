@@ -136,6 +136,7 @@ class Acervo(Base):
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
     lock_warned: Mapped[bool] = mapped_column(Boolean, default=False)
     seq_counter: Mapped[int] = mapped_column(Integer, default=0)
+    split_albums: Mapped[bool | None] = mapped_column(Boolean, default=False)  # álbum vira mídias soltas
 
 
 class AcervoItem(Base):
