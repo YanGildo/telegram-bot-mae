@@ -15,7 +15,8 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from sqlalchemy import select, update
 
-from ..db import (Acervo, AcervoItem, ChildChat, Database, PendingDelete, Schedule, ScheduleDest, utcnow)
+from ..db import (Acervo, AcervoItem, ChildBot, ChildChat, Database, PendingDelete, Schedule, ScheduleDest,
+                  ScheduleItem, utcnow)
 from .content import buttons_markup, load_media, random_text, send_post
 
 logger = logging.getLogger(__name__)
@@ -168,21 +169,42 @@ def acervo_caption(acv: Acervo, item: AcervoItem) -> str:
     return "\n\n".join(x for x in (base.strip(), footer.strip()) if x)
 
 
+def _round_note(items: list, item, seq_mode: bool, at_end: str, what: str) -> str:
+    """Texto do aviso quando este envio fecha uma rodada (todas as mídias já saíram)."""
+    if len(items) < 2:
+        return ""
+    if seq_mode:
+        if any(x.seq > item.seq for x in items):
+            return ""
+        tail = "Ele parou: para voltar, mude para recomeçar ou zere." if at_end == "stop" else \
+            "O próximo envio recomeça do primeiro."
+        return f"🔁 <b>Rodada completa</b> · {what}\n\nTodos os {len(items)} posts já saíram em ordem. {tail}"
+    if min(x.used_count for x in items) < item.used_count:
+        return ""
+    return (f"🔁 <b>Rodada completa</b> · {what}\n\nTodos os {len(items)} posts já saíram "
+            f"{item.used_count}x. A partir de agora começa a rodada {item.used_count + 1} (sorteio de novo).")
+
+
 async def pick_item(db: Database, child_id: int) -> tuple[AcervoItem | None, str]:
     """Escolhe o próximo post do acervo e marca como usado."""
+    item, why, _ = await pick_item_round(db, child_id)
+    return item, why
+
+
+async def pick_item_round(db: Database, child_id: int) -> tuple[AcervoItem | None, str, str]:
     async with db.session() as s:
         acv = await s.scalar(select(Acervo).where(Acervo.child_id == child_id))
         if acv is None:
-            return None, "acervo vazio"
+            return None, "acervo vazio", ""
         items = list(await s.scalars(select(AcervoItem).where(
             AcervoItem.child_id == child_id, AcervoItem.state == "active").order_by(AcervoItem.seq)))
         if not items:
-            return None, "acervo vazio"
+            return None, "acervo vazio", ""
         if acv.order_mode == "seq":
             item = next((x for x in items if x.seq > acv.cursor), None)
             if item is None:
                 if acv.at_end == "stop":
-                    return None, "o acervo chegou ao fim (sequencial, parar no fim)"
+                    return None, "o acervo chegou ao fim (sequencial, parar no fim)", ""
                 item = items[0]
             acv.cursor = item.seq
         else:
@@ -194,8 +216,34 @@ async def pick_item(db: Database, child_id: int) -> tuple[AcervoItem | None, str
         item.used_count += 1
         item.last_used_at = utcnow()
         acv.last_item_id = item.id
+        note = _round_note(items, item, acv.order_mode == "seq", acv.at_end, "acervo")
         await s.commit()
-        return item, ""
+        return item, "", note
+
+
+async def pick_sched_item(db: Database, sch_id: int) -> tuple[ScheduleItem | None, str]:
+    """Vários conteúdos de uma mensagem repetida: escolhe o próximo (em ordem ou sorteado)."""
+    async with db.session() as s:
+        sch = await s.get(Schedule, sch_id)
+        items = list(await s.scalars(select(ScheduleItem).where(ScheduleItem.schedule_id == sch_id)
+                                     .order_by(ScheduleItem.seq, ScheduleItem.id)))
+        if not items:
+            return None, ""
+        if (sch.content_order or "seq") == "seq":
+            item = next((x for x in items if x.seq > (sch.content_cursor or 0)), None) or items[0]
+            sch.content_cursor = item.seq
+        else:
+            low = min(x.used_count for x in items)
+            pool = [x for x in items if x.used_count == low]
+            if len(pool) > 1 and sch.content_last:
+                pool = [x for x in pool if x.id != sch.content_last] or pool
+            item = random.choice(pool)
+        item.used_count += 1
+        sch.content_last = item.id
+        note = _round_note(items, item, (sch.content_order or "seq") == "seq", "restart",
+                           f"conteúdos de «{sch.name or 'mensagem repetida'}»")
+        await s.commit()
+        return item, note
 
 
 # ---------- executar uma programação ----------
@@ -231,8 +279,12 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
     if not force and sch.max_per_day and sch.posts_day == today and sch.posts_today >= sch.max_per_day:
         return 0, "limite do dia atingido"
 
+    round_note = ""
     if sch.kind == "msg":
         text, media, markup, above = sch.text_html, load_media(sch.media), buttons_markup(sch.buttons), sch.caption_above
+        variant, round_note = await pick_sched_item(db, sch_id)
+        if variant is not None:  # vários conteúdos: usa o da vez (texto dele, ou o texto principal se vazio)
+            text, media = variant.text_html or sch.text_html, load_media(variant.media)
         if not text.strip() and not media:
             await _set_error(db, sch_id, "mensagem vazia: use ✍️ Personalizar mensagem")
             return 0, "mensagem vazia"
@@ -240,9 +292,12 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
         acv = await get_acervo(db, sch.child_id)
         if acv.paused and not force:
             return 0, "acervo pausado"
-        item, why = await pick_item(db, sch.child_id)
+        item, why, round_note = await pick_item_round(db, sch.child_id)
         if item is None:
             await _set_error(db, sch_id, why)
+            if "fim" in why and sch.last_error != why:
+                await _notify(bot, db, sch.child_id, f"⏹ <b>Acervo parado</b>\n\n{why}. "
+                                                     "Poste mídias novas, zere ou mude para recomeçar.")
             return 0, why
         text, media, markup, above = acervo_caption(acv, item), load_media(item.media), buttons_markup(acv.buttons), \
             acv.caption_above
@@ -287,8 +342,19 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
         row.last_run_at = utcnow() if sent else row.last_run_at
         row.last_error = "; ".join(errors)[:300] if errors else None
         await s.commit()
+    if round_note and sent:
+        await _notify(bot, db, sch.child_id, round_note)
     logger.info("Programação %s: enviado em %s destino(s)%s", sch_id, sent, f", erros: {errors}" if errors else "")
     return sent, ("; ".join(errors) if errors else "")
+
+
+async def _notify(bot: Bot, db: Database, child_id: int, text: str) -> None:
+    """Aviso para o dono: no canal de registros, ou no privado se não tiver canal."""
+    from .logs import send_log
+    async with db.session() as s:
+        child = await s.get(ChildBot, child_id)
+    if child is not None:
+        await send_log(bot, db, child, text, owner_fallback=True)
 
 
 async def _set_error(db: Database, sch_id: int, msg: str) -> None:

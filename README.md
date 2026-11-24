@@ -1,4 +1,4 @@
-# Bot Mãe — versão 4 (Etapas 1 a 4)
+# Bot Mãe — versão 5 (Etapas 1 a 4)
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -41,6 +41,16 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 - Fixar (com ou sem notificar), apagar a anterior, exclusão automática, destinos, 🚀 enviar agora
 - O mesmo agendador roda as programações do acervo
 
+**📋 Canal de registros** (painel → 📋 Registros): canal ou grupo onde o bot conta o que fez
+- 🔇 silenciados (botões 🔊 Desmutar e 🚷 Banir), 🚷 banidos (♻️ Desbanir), ❗ expulsos, ⚠️ advertências (🧹 Zerar)
+- 🚪 pedidos de entrada aprovados/recusados e o motivo
+- 🔁 aviso quando o acervo ou os conteúdos de uma programação completam a rodada (sem canal, o aviso vai no seu privado)
+
+**🚪 Entrada por nome e bio** (painel → 🚪 Entrada, por grupo/canal): com link de convite "pedir aprovação", o bot aprova ou recusa olhando nome e bio
+- Palavras bloqueadas (recusa ou deixa esperando você), palavras de liberação (só aprova quem tem uma), exigir @
+
+**Programações**: ✏️ nome para cada uma; 📚 vários conteúdos numa mensagem repetida (cada envio usa um, em ordem ou sorteado), enviados ou encaminhados direto no bot, separados do acervo
+
 **🚫 Palavras proibidas** (por grupo, sem limite de palavras)
 - Punição: desativado, advertência (1 a 5, depois silencia/kick/ban), kick, silenciar, ban; duração (1 h a 30 dias ou para sempre)
 - Apagar a mensagem ou não; busca "contém" ou "palavra exata"; ignora acentos e maiúsculas; frases também
@@ -74,7 +84,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "114/114 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "138/138 passaram" ou mais.
 
 ## Arquivos
 
@@ -93,7 +103,9 @@ app/
   child/acervo.py    acervo (canal de origem, limite, legenda)
   child/schedules.py telas das programações e mensagens repetidas
   child/scheduling.py agendador (próximo envio, publicar, exclusão automática)
-  child/words.py     palavras proibidas
+  child/words.py     palavras proibidas (e botões do canal de registros)
+  child/joins.py     entrada por nome e bio, tela do canal de registros
+  child/logs.py      envio para o canal de registros
   child/content.py   montar e enviar posts (mídias e botões)
 servidor/            instalar.sh e atualizar.sh
 docs/PLANO.md        plano completo

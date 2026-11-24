@@ -18,6 +18,7 @@ from .. import repo
 from ..db import ChildBot, ChildChat, Database, PendingDelete, WarnCount, WordFilter, utcnow
 from ..ui import CP, Screen, cbtn, kb, show
 from .flow import ask
+from .logs import LG, action_markup, send_log, who
 from .scheduling import interval_text, on_group_message
 
 logger = logging.getLogger(__name__)
@@ -272,13 +273,15 @@ async def on_group_text(message: Message, bot: Bot, child: ChildBot, db: Databas
         if f is not None and f.action != "off":
             word = find_banned(text, f)
             if word and not await _is_exempt(bot, db, child, message.chat.id, user.id):
-                await _apply(bot, db, child, message, f)
+                await _apply(bot, db, child, message, f, word)
                 return
     await on_group_message(bot, db, settings, child.id, message.chat.id)
 
 
-async def _apply(bot: Bot, db: Database, child: ChildBot, message: Message, f: WordFilter) -> None:
+async def _apply(bot: Bot, db: Database, child: ChildBot, message: Message, f: WordFilter, word: str = "") -> None:
     chat_id, user = message.chat.id, message.from_user
+    where = escape(message.chat.title or str(chat_id))
+    said = escape((message.text or message.caption or "")[:200])
     name = f'<a href="tg://user?id={user.id}">{escape(user.first_name or "usuário")}</a>'
     if f.delete:
         try:
@@ -301,13 +304,75 @@ async def _apply(bot: Bot, db: Database, child: ChildBot, message: Message, f: W
         if count < f.warn_limit:
             await _notice(bot, db, child, chat_id, f"⚠️ {name}, essa palavra não é permitida aqui. "
                                                    f"Advertência {count}/{f.warn_limit}.")
+            await send_log(bot, db, child, f"⚠️ <b>Advertência {count}/{f.warn_limit}</b> · palavras proibidas\n\n"
+                                           f"Quem: {who(user)}\nOnde: {where}\nPalavra: <code>{escape(word)}</code>\n"
+                                           f"Mensagem: <i>{said}</i>", action_markup("warn", chat_id, user.id))
             return
         action = f.warn_then
     try:
         await punish(bot, chat_id, user.id, action, minutes if action != "kick" else 0)
     except (TelegramBadRequest, TelegramForbiddenError) as e:
         logger.info("Palavras proibidas: não puni %s em %s: %s", user.id, chat_id, e)
+        await send_log(bot, db, child, f"⚠️ <b>Não consegui punir</b> {who(user)} em {where}: {escape(e.message)}\n"
+                                       "Confira se o bot é administrador com <b>Banir usuários</b>.")
         return
+    title = {"mute": "🔇 Silenciado", "ban": "🚷 Banido", "kick": "❗ Expulso"}[action]
+    span = f" por {interval_text(minutes)}" if minutes and action != "kick" else (" para sempre" if action != "kick" else "")
+    await send_log(bot, db, child, f"<b>{title}{span}</b> · palavras proibidas\n\n"
+                                   f"Quem: {who(user)}\nOnde: {where}\nPalavra: <code>{escape(word)}</code>\n"
+                                   f"Mensagem: <i>{said}</i>", action_markup(action, chat_id, user.id))
     what = {"mute": "silenciado", "ban": "banido", "kick": "removido"}[action]
     extra = f" por {interval_text(minutes)}" if minutes and action != "kick" else ""
     await _notice(bot, db, child, chat_id, f"🚫 {name} foi {what}{extra}: palavra proibida.")
+
+
+# ---------- botões do canal de registros ----------
+
+FULL_PERMISSIONS = ChatPermissions(
+    can_send_messages=True, can_send_audios=True, can_send_documents=True, can_send_photos=True,
+    can_send_videos=True, can_send_video_notes=True, can_send_voice_notes=True, can_send_polls=True,
+    can_send_other_messages=True, can_add_web_page_previews=True, can_invite_users=True)
+
+
+@router.callback_query(LG.filter())
+async def on_log_button(cb: CallbackQuery, callback_data: LG, bot: Bot, child: ChildBot, db: Database) -> None:
+    if not await repo.is_child_admin(db, child, cb.from_user.id):
+        await cb.answer("Só o dono e os admins do bot.", show_alert=True)
+        return
+    a, chat_id, user_id = callback_data.a, callback_data.c, callback_data.u
+    try:
+        if a == "unmute":
+            try:
+                perms = getattr(await bot.get_chat(chat_id), "permissions", None) or FULL_PERMISSIONS
+            except (TelegramBadRequest, TelegramForbiddenError):
+                perms = FULL_PERMISSIONS
+            await bot.restrict_chat_member(chat_id, user_id, perms, use_independent_chat_permissions=True)
+            done = "🔊 Desmutado"
+        elif a == "ban":
+            await bot.ban_chat_member(chat_id, user_id)
+            done = "🚷 Banido"
+        elif a == "unban":
+            await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            done = "♻️ Desbanido"
+        elif a == "reset":
+            async with db.session() as s:
+                w = await s.scalar(select(WarnCount).where(WarnCount.child_id == child.id, WarnCount.chat_id == chat_id,
+                                                           WarnCount.user_id == user_id))
+                if w:
+                    w.count = 0
+                    await s.commit()
+            done = "🧹 Advertências zeradas"
+        else:
+            await cb.answer()
+            return
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        await cb.answer(f"Não consegui: {e.message}", show_alert=True)
+        return
+    await cb.answer(done + ".")
+    if cb.message is not None and getattr(cb.message, "html_text", None):
+        markup = action_markup("ban", chat_id, user_id) if a == "ban" else None
+        try:
+            await cb.message.edit_text(cb.message.html_text + f"\n\n{done} por {escape(cb.from_user.full_name)}",
+                                       reply_markup=markup, link_preview_options={"is_disabled": True})
+        except TelegramBadRequest:
+            pass

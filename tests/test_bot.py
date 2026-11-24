@@ -667,6 +667,137 @@ async def main():
     check("v4: teste de emoji premium gera relatório", any("Teste de emoji premium" in m.text and "Fragment" in m.text
                                                           for m in texts(calls)))
 
+    # ================= v5: registros, entrada, nomes, vários conteúdos, rodada =================
+    from aiogram.methods import ApproveChatJoinRequest, DeclineChatJoinRequest
+    from aiogram.types import ChatJoinRequest
+    from app.child.logs import LG
+    from app.db import ScheduleItem
+    LOGCH = Chat(id=-100605, type="channel", title="Registros")
+    await joined(LOGCH, OWNER, admin_member(BOTS["700000001"], post=True))
+    async with db.session() as s:
+        log_row = await s.scalar(select(ChildChat).where(ChildChat.child_id == c1.id, ChildChat.chat_id == -100605))
+    calls = await cclick(OWNER, CP(s="logc").pack())
+    check("v5: tela do canal de registros explica", any("Desmutar" in m.text and "Registros" in " ".join(buttons(m))
+                                                        for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="logc", a="set", i=log_row.id).pack())
+    check("v5: canal de registros definido e avisado", any(m.chat_id == -100605 for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="sch", a="dst", i=sm.id).pack())
+    check("v5: canal de registros não aparece como destino", not any("Registros" in " ".join(buttons(m)) for m in texts(calls)))
+
+    # palavras proibidas → registro com botões
+    async with db.session() as s:
+        f = await s.scalar(select(WordFilter).where(WordFilter.chat_row_id == grp_row.id))
+        f.action, f.words, f.match, f.duration_min = "mute", "spam", "contains", 1440
+        await s.commit()
+    calls = await csay(BIA, "olha o SPAM", chat=ANA_G)
+    logm = [m for m in texts(calls) if m.chat_id == -100605]
+    check("v5: silenciado vai para o registro com Desmutar", logm and "Silenciado por 1 dia" in logm[0].text
+          and "🔊 Desmutar" in buttons(logm[0]) and "333" in logm[0].text)
+    calls = await cclick(BIA, LG(a="unmute", c=-100604, u=333).pack())
+    check("v5: só admin do bot desmuta", not any(isinstance(m, RestrictChatMember) for _, m in calls))
+    calls = await cclick(OWNER, LG(a="unmute", c=-100604, u=333).pack())
+    um = [m for _, m in calls if isinstance(m, RestrictChatMember)]
+    check("v5: Desmutar devolve a permissão de falar", um and um[0].permissions.can_send_messages)
+    async with db.session() as s:
+        f = await s.get(WordFilter, f.id)
+        f.action = "ban"
+        await s.commit()
+    calls = await csay(BIA, "spam", chat=ANA_G)
+    logm = [m for m in texts(calls) if m.chat_id == -100605]
+    check("v5: banido vai para o registro com Desbanir", logm and "♻️ Desbanir" in buttons(logm[0]))
+    calls = await cclick(OWNER, LG(a="unban", c=-100604, u=333).pack())
+    check("v5: Desbanir", any(type(m).__name__ == "UnbanChatMember" for _, m in calls))
+    async with db.session() as s:
+        f = await s.get(WordFilter, f.id)
+        f.action = "off"
+        await s.commit()
+
+    # entrada por nome e bio
+    calls = await cclick(OWNER, CP(s="joins").pack())
+    check("v5: tela de entrada explica o link com aprovação", any("Pedir aprovação" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="jf", a="tog", i=grp_row.id).pack())
+    await cclick(OWNER, CP(s="jf", a="addb", i=grp_row.id).pack())
+    calls = await csay(OWNER, "promo, Vip Grátis")
+    check("v5: adiciona palavras bloqueadas", any("Palavras bloqueadas (nome ou bio): 2" in m.text for m in texts(calls)))
+
+    async def join_req(user, bio):
+        r = ChatJoinRequest(chat=ANA_G, from_user=user, user_chat_id=user.id, date=NOW, bio=bio)
+        return await feed(child_dp, cbot, chat_join_request=r)
+    SPAMMY = User(id=901, is_bot=False, first_name="Canal", last_name="PROMOÇÕES")
+    calls = await join_req(SPAMMY, "")
+    check("v5: nome com palavra bloqueada é recusado e registrado",
+          any(isinstance(m, DeclineChatJoinRequest) for _, m in calls)
+          and any(m.chat_id == -100605 and "Entrada recusada" in m.text and "nome" in m.text for m in texts(calls)))
+    calls = await join_req(User(id=902, is_bot=False, first_name="Carla", username="carla"), "Entre no meu vip grátis")
+    check("v5: bio com palavra bloqueada é recusada (ignora acento)", any(isinstance(m, DeclineChatJoinRequest) for _, m in calls))
+    calls = await join_req(User(id=903, is_bot=False, first_name="Duda", username="duda"), "Amo games")
+    check("v5: quem passa é aprovado", any(isinstance(m, ApproveChatJoinRequest) for _, m in calls))
+    await cclick(OWNER, CP(s="jf", a="user", i=grp_row.id).pack())
+    calls = await join_req(User(id=904, is_bot=False, first_name="Sem Arroba"), "")
+    check("v5: exigir @ recusa quem não tem", any(isinstance(m, DeclineChatJoinRequest) for _, m in calls))
+    await cclick(OWNER, CP(s="jf", a="adda", i=grp_row.id).pack())
+    await csay(OWNER, "games")
+    calls = await join_req(User(id=905, is_bot=False, first_name="Eva", username="eva"), "Viajante")
+    check("v5: com lista de liberação, quem não tem a palavra fica esperando",
+          not any(isinstance(m, (ApproveChatJoinRequest, DeclineChatJoinRequest)) for _, m in calls)
+          and any("esperando você" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="jf", a="tog", i=grp_row.id).pack())
+    calls = await join_req(User(id=906, is_bot=False, first_name="Promo"), "")
+    check("v5: entrada desligada não mexe nos pedidos", not any(isinstance(m, (ApproveChatJoinRequest, DeclineChatJoinRequest))
+                                                                for _, m in calls))
+
+    # nome da programação
+    await cclick(OWNER, CP(s="sch", a="name", i=sm.id).pack())
+    await csay(OWNER, "Divulgação VIP noite")
+    calls = await cclick(OWNER, CP(s="schs", a="msg").pack())
+    check("v5: programação com nome na lista", any("Divulgação VIP noite" in m.text for m in texts(calls)))
+
+    # vários conteúdos
+    calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
+    check("v5: personalizar tem Vários conteúdos", any("📚 Vários conteúdos (0)" in buttons(m) for m in texts(calls)))
+    await cclick(OWNER, CP(s="msgi", a="add", i=sm.id).pack())
+    await csay(OWNER, "Conteúdo A")
+    await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"), from_user=OWNER,
+                                               photo=photo("cB"), caption="Conteúdo B"))
+    await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"), from_user=OWNER,
+                                               photo=photo("cC1"), media_group_id="alb5", caption="Conteúdo C"))
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"),
+                                                       from_user=OWNER, photo=photo("cC2"), media_group_id="alb5"))
+    async with db.session() as s:
+        its = list(await s.scalars(select(ScheduleItem).where(ScheduleItem.schedule_id == sm.id).order_by(ScheduleItem.seq)))
+    check("v5: cada mensagem/álbum vira um conteúdo", len(its) == 3 and its[2].media.count('"f"') == 2)
+    calls = await cclick(OWNER, CP(s="msgi", i=sm.id).pack())
+    check("v5: tela lista os conteúdos", any("Conteúdo A" in m.text and "álbum com 2" in m.text for m in texts(calls)))
+    sent_order = []
+    for _ in range(3):
+        calls = await cclick(OWNER, CP(s="sch", a="now", i=sm.id).pack())
+        for _, m in calls:
+            if getattr(m, "chat_id", None) == -100604:
+                if isinstance(m, SendMessage) and m.text.startswith("Conteúdo"):
+                    sent_order.append(m.text)
+                elif isinstance(m, SendPhoto):
+                    sent_order.append(m.caption)
+                elif isinstance(m, SendMediaGroup):
+                    sent_order.append(m.media[0].caption)
+    check("v5: usa um conteúdo por envio, em ordem", sent_order == ["Conteúdo A", "Conteúdo B", "Conteúdo C"])
+    check("v5: aviso de rodada completa no registro", any(m.chat_id == -100605 and "Rodada completa" in m.text for m in texts(calls)))
+    async with db.session() as s:
+        n_acv = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.media.contains('"cB"')))))
+    check("v5: conteúdos não entram no acervo", n_acv == 0)
+
+    # rodada do acervo (aleatório) avisa
+    await cclick(OWNER, CP(s="acv", a="setord", i=0).pack())
+    async with db.session() as s:
+        for x in await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id)):
+            x.used_count = 0
+        await s.commit()
+        n_items = len(list(await s.scalars(select(AcervoItem).where(AcervoItem.child_id == c1.id, AcervoItem.state == "active"))))
+    notes = 0
+    for _ in range(n_items):
+        calls = await cclick(OWNER, CP(s="sch", a="now", i=sa.id).pack())
+        notes += sum(1 for m in texts(calls) if "Rodada completa" in m.text and "acervo" in m.text)
+    check("v5: acervo aleatório avisa uma vez ao fechar a rodada", notes == 1)
+
     # ---------- reinício e token revogado ----------
     await manager.stop_all()
     manager2 = BotManager(db, settings, child_dp, mother, session_factory=lambda: session, poll_timeout=1)

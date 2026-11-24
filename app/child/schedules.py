@@ -13,7 +13,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import delete, select
 
 from .. import repo
-from ..db import ChildBot, ChildChat, Database, Schedule, ScheduleDest
+from ..db import ChildBot, ChildChat, Database, Schedule, ScheduleDest, ScheduleItem
 from ..ui import CP, Screen, cbtn, kb, send, show
 from .content import (buttons_markup, buttons_text, load_media, media_from_message, media_summary, parse_buttons,
                       send_post)
@@ -28,6 +28,10 @@ MAXES = [0, 1, 2, 3, 5, 10, 24, 48]
 AUTODEL = [0, 5, 15, 30, 60, 180, 360, 720, 1440]
 KIND_NAME = {"msg": "Mensagem", "acervo": "Programação do acervo"}
 PIN_TEXT = {0: "❌", 1: "✅🔕", 2: "✅🔔"}
+
+
+def label(sch: Schedule, n: int) -> str:
+    return sch.name or f"{KIND_NAME[sch.kind]} {n}"
 
 
 def strip_tags(t: str) -> str:
@@ -62,7 +66,7 @@ async def screen_list(child: ChildBot, db: Database, settings, kind: str) -> Scr
                  "Dá para ter várias (ex.: uma de 30 em 30 min para os grupos e outra 3x por dia para o canal).\n",
                  f"Hora atual: {datetime.now(settings.tz).strftime('%d/%m/%Y %H:%M')}\n"]
     for n, sch in enumerate(items, 1):
-        lines.append(f"💭 <b>{n}</b> · {'Ativado ✅' if sch.enabled else 'Desativado ❌'}")
+        lines.append(f"💭 <b>{n}. {escape(label(sch, n))}</b> · {'Ativado ✅' if sch.enabled else 'Desativado ❌'}")
         lines.append(f"├ Cronograma: {sch.start_time}")
         lines.append(f"├ {repeat_text(sch)}")
         lines.append(f"├ Destinos: {await _dest_count(db, sch.id)} · Próximo: {next_text(sch, settings.tz)}")
@@ -78,7 +82,7 @@ async def screen_list(child: ChildBot, db: Database, settings, kind: str) -> Scr
     rows = [[cbtn("➕ Adicionar mensagem" if kind == "msg" else "➕ Nova programação", "schs", "add",
                   0 if kind == "acervo" else 1, style="primary")]]
     for n, sch in enumerate(items, 1):
-        rows.append([cbtn(f"💭 {n}", "sch", "", sch.id),
+        rows.append([cbtn(f"💭 {n}. {(sch.name or '')[:18]}".strip(), "sch", "", sch.id),
                      cbtn("✅ Ativado" if sch.enabled else "❌ Desativado", "schs", "tog", sch.id),
                      cbtn("🗑", "sch", "del", sch.id)])
     back = cbtn("« Painel", "home") if kind == "msg" else cbtn("« Acervo", "acv")
@@ -94,7 +98,7 @@ async def screen_sch(child: ChildBot, db: Database, settings, sch_id: int) -> Sc
     dcount = await _dest_count(db, sch.id)
     period = "sem data" if not (sch.start_date or sch.end_date) else \
         f"{_br(sch.start_date) or 'hoje'} até {_br(sch.end_date) or 'sem fim'}"
-    lines = [f"{'🔁' if sch.kind == 'msg' else '🗂'} <b>{KIND_NAME[sch.kind]} {n}</b>\n",
+    lines = [f"{'🔁' if sch.kind == 'msg' else '🗂'} <b>{escape(label(sch, n))}</b>\n",
              f"💡 Situação: {'Ativado ✅' if sch.enabled else 'Desativado ❌'}",
              f"🕑 Cronograma: {sch.start_time}",
              f"🔁 Repetição: {repeat_text(sch)}",
@@ -121,9 +125,9 @@ async def screen_sch(child: ChildBot, db: Database, settings, sch_id: int) -> Sc
                  "• Apagar a anterior: ao postar de novo, some a mensagem anterior do mesmo grupo.\n"
                  "• Exclusão automática: apaga cada mensagem depois do tempo escolhido.")
     i = sch.id
-    rows = []
+    rows = [[cbtn("✏️ Nome", "sch", "name", i)]]
     if sch.kind == "msg":
-        rows.append([cbtn("✍️ Personalizar mensagem", "msgc", "", i)])
+        rows[0].insert(0, cbtn("✍️ Personalizar mensagem", "msgc", "", i))
     rows += [[cbtn("🕑 Cronograma", "sch", "start", i), cbtn("🔁 Repetição", "sch", "trig", i)],
              [cbtn("📅 Dias da semana", "sch", "days", i), cbtn("⏰ Horário permitido", "sch", "win", i)],
              [cbtn("📆 Período", "sch", "period", i), cbtn("🔢 Máximo por dia", "sch", "max", i)],
@@ -185,8 +189,10 @@ def screen_auto(sch: Schedule) -> Screen:
 
 async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
     acv = await get_acervo(db, child.id)
+    async with db.session() as s:
+        log_chat = (await s.get(ChildBot, child.id)).log_chat_id
     chats = [c for c in await repo.child_chats(db, child.id)
-             if c.chat_id != acv.source_chat_id and c.bot_status in ("administrator", "creator")]
+             if c.chat_id not in (acv.source_chat_id, log_chat) and c.bot_status in ("administrator", "creator")]
     async with db.session() as s:
         chosen = set(await s.scalars(select(ScheduleDest.chat_row_id).where(ScheduleDest.schedule_id == sch.id)))
         others = set(await s.scalars(select(ScheduleDest.chat_row_id).join(
@@ -206,18 +212,29 @@ async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
     return text, kb(*rows, [cbtn("« Voltar", "sch", "", sch.id)])
 
 
+async def _items(db: Database, sch_id: int) -> list[ScheduleItem]:
+    async with db.session() as s:
+        return list(await s.scalars(select(ScheduleItem).where(ScheduleItem.schedule_id == sch_id)
+                                    .order_by(ScheduleItem.seq, ScheduleItem.id)))
+
+
 async def screen_content(db: Database, sch: Schedule) -> Screen:
     media = load_media(sch.media)
     rows_btn, _ = parse_buttons(sch.buttons)
+    n_items = len(await _items(db, sch.id))
     text = ("✍️ <b>Personalizar mensagem</b>\n\n"
             f"📄 Texto {'✅' if sch.text_html else '❌'}\n"
             f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n"
             f"🔠 Botões de link {'✅' if rows_btn else '❌'}\n"
-            f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n\n"
+            f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n"
+            f"📚 Vários conteúdos: {n_items or '❌'}\n\n"
             "👉 Use os botões abaixo para definir cada parte. 👀 Veja mostra só aquela parte; "
-            "👀 Visualização completa manda a mensagem inteira aqui, do jeito que vai sair.")
+            "👀 Visualização completa manda a mensagem inteira aqui, do jeito que vai sair.\n\n"
+            "📚 <b>Vários conteúdos</b>: em vez de uma mensagem só, cadastre vários posts (cada um com "
+            "texto e mídia) e a programação usa um por vez. É separado do acervo e das outras programações.")
     i = sch.id
-    return text, kb([cbtn("📄 Texto", "msgc", "text", i), cbtn("👀 Veja", "msgc", "vt", i)],
+    return text, kb([cbtn(f"📚 Vários conteúdos ({n_items})", "msgi", "", i)],
+                    [cbtn("📄 Texto", "msgc", "text", i), cbtn("👀 Veja", "msgc", "vt", i)],
                     [cbtn("📸 Mídias", "msgc", "media", i), cbtn("👀 Veja", "msgc", "vm", i)],
                     [cbtn("🔠 Botões de URL", "msgc", "btn", i), cbtn("👀 Veja", "msgc", "vb", i)],
                     [cbtn(("✅ " if sch.caption_above else "❌ ") + "🖼 Mídia abaixo do texto", "msgc", "above", i)],
@@ -240,6 +257,103 @@ async def _update(db: Database, sch_id: int, **fields) -> None:
 
 
 # ---------- botões ----------
+
+async def screen_items(db: Database, sch: Schedule) -> Screen:
+    items = await _items(db, sch.id)
+    order = "em ordem" if (sch.content_order or "seq") == "seq" else "sorteado (só repete depois de usar todos)"
+    lines = [f"📚 <b>Vários conteúdos</b> · {escape(sch.name or 'mensagem repetida')}\n",
+             "Cada envio da programação usa <b>um</b> destes posts, " + order + ". "
+             "Os botões de link, destinos e horários são os da programação. "
+             "Se um conteúdo não tiver texto, vai com o texto principal.\n",
+             "Para adicionar: toque em ➕ e mande (ou encaminhe de qualquer grupo/canal) as mensagens aqui: "
+             "cada mensagem ou álbum vira um conteúdo. Nada disso entra no acervo.\n"]
+    for n, it in enumerate(items[:30], 1):
+        prev = strip_tags(it.text_html)[:40]
+        lines.append(f"{n}. {media_summary(load_media(it.media))}" + (f" · {escape(prev)}" if prev else "")
+                     + f" · usado {it.used_count}x")
+    if not items:
+        lines.append("<i>Nenhum ainda: a programação usa a mensagem principal.</i>")
+    if len(items) > 30:
+        lines.append(f"… e mais {len(items) - 30}")
+    rows = [[cbtn("➕ Adicionar conteúdos", "msgi", "add", sch.id, style="primary")],
+            [cbtn(("✅ " if (sch.content_order or "seq") == "seq" else "") + "🔢 Em ordem", "msgi", "ord", sch.id, j=0),
+             cbtn(("✅ " if sch.content_order == "random" else "") + "🎲 Sorteado", "msgi", "ord", sch.id, j=1)]]
+    rows += [[cbtn(f"🗑 {n}", "msgi", "rm", sch.id, j=it.id) for n, it in list(enumerate(items[:30], 1))[k:k + 5]]
+             for k in range(0, min(len(items), 30), 5)]
+    if items:
+        rows.append([cbtn("🧹 Apagar todos", "msgi", "clr", sch.id)])
+    return "\n".join(lines), kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
+
+
+@router.callback_query(CP.filter(F.s == "msgi"))
+async def on_items(cb: CallbackQuery, callback_data: CP, state: FSMContext, child: ChildBot, db: Database) -> None:
+    if not await repo.is_child_admin(db, child, cb.from_user.id):
+        await cb.answer("Só o dono e os admins do bot usam este painel.", show_alert=True)
+        return
+    a, i, j = callback_data.a, callback_data.i, callback_data.j
+    sch = await _get(db, child, i)
+    if sch is None:
+        await cb.answer("Não encontrada.", show_alert=True)
+        return
+    await state.clear()
+    if a == "add":
+        await state.set_state(ChildFlow.items)
+        await state.update_data(sch_id=i)
+        await cb.answer()
+        return await show(cb, ("➕ <b>Adicionar conteúdos</b>\n\nMande ou encaminhe as mensagens agora: texto, foto, vídeo, "
+                               "arquivo ou álbum (com legenda). Cada mensagem ou álbum vira um conteúdo.\n"
+                               "Quando terminar, toque em ✅ Pronto.", kb([cbtn("✅ Pronto", "msgi", "", i)])))
+    if a == "ord":
+        await _update(db, i, content_order="seq" if j == 0 else "random")
+    elif a == "rm":
+        async with db.session() as s:
+            await s.execute(delete(ScheduleItem).where(ScheduleItem.id == j, ScheduleItem.schedule_id == i))
+            await s.commit()
+    elif a == "clr":
+        async with db.session() as s:
+            await s.execute(delete(ScheduleItem).where(ScheduleItem.schedule_id == i))
+            await s.commit()
+        await _update(db, i, content_cursor=0, content_last=None)
+    await cb.answer()
+    await show(cb, await screen_items(db, await _get(db, child, i)))
+
+
+@router.message(ChildFlow.items, F.chat.type == ChatType.PRIVATE)
+async def receive_item(message: Message, state: FSMContext, child: ChildBot, db: Database) -> None:
+    if not await repo.is_child_admin(db, child, message.from_user.id):
+        return
+    if message.text and message.text.startswith("/"):
+        await state.clear()
+        return
+    sch = await _get(db, child, (await state.get_data()).get("sch_id", 0))
+    if sch is None:
+        await state.clear()
+        return
+    m = media_from_message(message)
+    text = message.html_text if (message.text or message.caption) else ""
+    if m is None and not text:
+        await message.answer("Esse tipo de mensagem não serve. Mande texto, foto, vídeo, arquivo ou álbum.")
+        return
+    group = message.media_group_id
+    async with db.session() as s:
+        last = await s.scalar(select(ScheduleItem).where(ScheduleItem.schedule_id == sch.id)
+                              .order_by(ScheduleItem.seq.desc(), ScheduleItem.id.desc()).limit(1))
+        if group and last is not None and last.media_group_id == group:  # resto do mesmo álbum
+            media = load_media(last.media)
+            if m and len(media) < 10:
+                media.append(m)
+                last.media = json.dumps(media)
+            if text and not last.text_html:
+                last.text_html = text
+            await s.commit()
+            return
+        s.add(ScheduleItem(schedule_id=sch.id, seq=(last.seq + 1) if last else 1, text_html=text,
+                           media=json.dumps([m] if m else []), media_group_id=group))
+        await s.commit()
+        total = len(list(await s.scalars(select(ScheduleItem.id).where(ScheduleItem.schedule_id == sch.id))))
+    await message.answer(f"✅ Conteúdo {total} salvo. Mande o próximo ou toque em ✅ Pronto.",
+                         reply_markup=kb([cbtn("✅ Pronto", "msgi", "", sch.id)]))
+
 
 @router.callback_query(CP.filter(F.s.in_({"schs", "sch", "msgc"})))
 async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot: Bot, child: ChildBot,
@@ -322,6 +436,10 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         return await show(cb, await screen_content(db, await _get(db, child, i)))
 
     # ---- s_ == "sch"
+    if a == "name":
+        return await ask(cb, state, "sch_name", "✏️ <b>Nome da programação</b>\n\nEnvie um nome curto para saber do "
+                         "que se trata (ex.: <i>Divulgação VIP noite</i>). Envie <code>-</code> para tirar o nome.",
+                         cbtn("❌ Cancelar", "sch", "", i), sch_id=i)
     if a == "start":
         return await ask(cb, state, "sch_start", "🕑 <b>Cronograma</b>\n\nEnvie o horário de referência, ex.: "
                          "<code>23:23</code>. Os envios saem nesse horário e de tanto em tanto a partir dele.",
@@ -408,7 +526,8 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         if not sch.enabled and not await _dest_count(db, i):
             await cb.answer("Escolha os destinos antes de ativar (📍 Destinos).", show_alert=True)
             return
-        if not sch.enabled and sch.kind == "msg" and not sch.text_html and not load_media(sch.media):
+        if not sch.enabled and sch.kind == "msg" and not sch.text_html and not load_media(sch.media) \
+                and not await _items(db, i):
             await cb.answer("A mensagem está vazia. Use ✍️ Personalizar mensagem.", show_alert=True)
             return
         await _update(db, i, enabled=not sch.enabled)
@@ -450,6 +569,9 @@ async def handle_input(kind: str, data: dict, message: Message, child: ChildBot,
             value = buttons_text(rows)
         await _update(db, sch.id, buttons=value)
         return await screen_content(db, await _get(db, child, sch.id))
+    if kind == "sch_name":
+        await _update(db, sch.id, name=None if raw == "-" else raw[:60])
+        return await screen_sch(child, db, settings, sch.id)
     if kind == "sch_start":
         m = parse_hhmm(raw)
         if m is None:

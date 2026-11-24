@@ -11,6 +11,7 @@ class ChildFlow(StatesGroup):
     add_admin = State()
     input = State()  # texto digitado; o tipo fica em data["kind"]
     media = State()  # recebendo fotos/vídeos de uma mensagem repetida
+    items = State()  # recebendo os vários conteúdos de uma mensagem repetida
 
 
 async def ask(cb: CallbackQuery, state: FSMContext, kind: str, prompt: str, cancel: InlineKeyboardButton,

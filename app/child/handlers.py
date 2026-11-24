@@ -15,7 +15,7 @@ from .. import repo
 from ..db import ChildAdmin, ChildBot, ChildChat, Database, utcnow
 from ..manager import BotManager
 from ..ui import CP, Screen, cbtn, kb, send, show, url
-from . import acervo, schedules, words
+from . import acervo, joins, schedules, words
 from .flow import ChildFlow
 from .scheduling import get_acervo, run_schedule
 
@@ -89,12 +89,15 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
             "• 🗂 <b>Acervo</b>: você posta fotos e vídeos num canal e o bot publica sozinho\n"
             "• 🔁 <b>Mensagens repetidas</b>: mensagens programadas, sem limite\n"
             "• 🚫 <b>Palavras proibidas</b>: censura no chat, com a punição que você escolher\n"
+            "• 🚪 <b>Entrada</b>: aprova ou recusa pedidos de entrada pelo nome e pela bio\n"
+            "• 📋 <b>Registros</b>: canal onde o bot conta o que fez (com botões para desmutar e desbanir)\n"
             "• 👮 <b>Admins do bot</b>: quem mais pode usar este painel")
     if problems:
         text += f"\n\n⚠️ {problems} grupo(s)/canal(is) com permissão faltando. Veja em 👥 Grupos e canais."
     return text, kb([cbtn(f"👥 Grupos e canais ({len(chats)})", "chats")],
                     [cbtn("🗂 Acervo", "acv"), cbtn("🔁 Mensagens repetidas", "schs", "msg")],
-                    [cbtn("🚫 Palavras proibidas", "words"), cbtn("👮 Admins do bot", "admins")],
+                    [cbtn("🚫 Palavras proibidas", "words"), cbtn("🚪 Entrada", "joins")],
+                    [cbtn("📋 Registros", "logc"), cbtn("👮 Admins do bot", "admins")],
                     [cbtn("❓ Ajuda", "help")])
 
 
@@ -318,6 +321,8 @@ async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: 
         result = await schedules.handle_input(kind, data, message, child, db, settings)
     elif kind.startswith("words_"):
         result = await words.handle_input(kind, data, message, child, db)
+    elif kind.startswith("join_"):
+        result = await joins.handle_input(kind, data, message, child, db)
     else:
         await state.clear()
         return
@@ -510,4 +515,4 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
 
 
 # as telas de acervo, programações e palavras ficam em arquivos próprios (vêm depois dos comandos acima)
-router.include_routers(schedules.router, acervo.router, words.router)
+router.include_routers(schedules.router, acervo.router, joins.router, words.router)
