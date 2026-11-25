@@ -86,11 +86,10 @@ async def on_join_request(req: ChatJoinRequest, bot: Bot, child: ChildBot, db: D
         await send_log(bot, db, child, f"⚠️ Não consegui responder o pedido de entrada de {who(user)} em "
                                        f"{escape(req.chat.title or '')}: {escape(e.message)}")
         return
-    icon = {"approve": "✅ <b>Entrada aprovada</b>", "decline": "🚫 <b>Entrada recusada</b>",
-            "hold": "⏳ <b>Pedido de entrada esperando você</b>"}[verdict]
-    bio = escape((req.bio or "")[:200]) or "<i>sem bio</i>"
-    await send_log(bot, db, child, f"{icon}\n\nQuem: {who(user)}\nOnde: {escape(req.chat.title or '')}\n"
-                                   f"Bio: {bio}\nMotivo: {escape(why)}")
+    if verdict == "decline":  # só as recusas vão para o registro (aprovações seriam mensagens demais)
+        bio = escape((req.bio or "")[:200]) or "<i>sem bio</i>"
+        await send_log(bot, db, child, f"🚫 <b>Entrada recusada</b>\n\nQuem: {who(user)}\n"
+                                       f"Onde: {escape(req.chat.title or '')}\nBio: {bio}\nMotivo: {escape(why)}")
     logger.info("@%s: pedido de %s em %s → %s (%s)", child.username, user.id, req.chat.id, verdict, why)
 
 
@@ -132,7 +131,7 @@ async def screen_filter(child: ChildBot, db: Database, chat: ChildChat) -> Scree
             "3. Se houver palavras de liberação, só aprova quem tiver uma delas no nome ou na bio; "
             "o resto fica esperando você.\n"
             "4. Senão, aprova (ou deixa esperando, se você escolher).\n\n"
-            "Ignora acentos e maiúsculas. Cada decisão vai para o 📋 canal de registros.")
+            "Ignora acentos e maiúsculas. Só as <b>recusas</b> vão para o 📋 canal de registros.")
     return text, kb([cbtn("⏸ Desligar" if f.enabled else "▶️ Ligar", "jf", "tog", i)],
                     [cbtn("➕ Bloquear palavras", "jf", "addb", i), cbtn("➖ Desbloquear", "jf", "remb", i)],
                     [cbtn("➕ Palavras de liberação", "jf", "adda", i), cbtn("➖ Tirar", "jf", "rema", i)],
@@ -153,7 +152,7 @@ async def screen_logchat(child: ChildBot, db: Database) -> Screen:
             "• 🔇 silenciados, 🚷 banidos e ❗ expulsos pelas palavras proibidas, com os botões "
             "<b>🔊 Desmutar</b> e <b>♻️ Desbanir</b>\n"
             "• ⚠️ advertências, com <b>🧹 Zerar advertências</b>\n"
-            "• 🚪 pedidos de entrada aprovados ou recusados\n"
+            "• 🚪 pedidos de entrada recusados\n"
             "• 🔁 aviso quando o acervo ou uma programação completa a rodada\n\n"
             "Crie o canal, coloque o bot como administrador e escolha abaixo. "
             "Ele não recebe posts das programações.\n\n"

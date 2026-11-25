@@ -731,7 +731,8 @@ async def main():
     calls = await join_req(User(id=902, is_bot=False, first_name="Carla", username="carla"), "Entre no meu vip grátis")
     check("v5: bio com palavra bloqueada é recusada (ignora acento)", any(isinstance(m, DeclineChatJoinRequest) for _, m in calls))
     calls = await join_req(User(id=903, is_bot=False, first_name="Duda", username="duda"), "Amo games")
-    check("v5: quem passa é aprovado", any(isinstance(m, ApproveChatJoinRequest) for _, m in calls))
+    check("v5: quem passa é aprovado, sem mensagem no registro", any(isinstance(m, ApproveChatJoinRequest) for _, m in calls)
+          and not any(m.chat_id == -100605 for m in texts(calls)))
     await cclick(OWNER, CP(s="jf", a="user", i=grp_row.id).pack())
     calls = await join_req(User(id=904, is_bot=False, first_name="Sem Arroba"), "")
     check("v5: exigir @ recusa quem não tem", any(isinstance(m, DeclineChatJoinRequest) for _, m in calls))
@@ -740,7 +741,7 @@ async def main():
     calls = await join_req(User(id=905, is_bot=False, first_name="Eva", username="eva"), "Viajante")
     check("v5: com lista de liberação, quem não tem a palavra fica esperando",
           not any(isinstance(m, (ApproveChatJoinRequest, DeclineChatJoinRequest)) for _, m in calls)
-          and any("esperando você" in m.text for m in texts(calls)))
+          and not any(m.chat_id == -100605 for m in texts(calls)))
     await cclick(OWNER, CP(s="jf", a="tog", i=grp_row.id).pack())
     calls = await join_req(User(id=906, is_bot=False, first_name="Promo"), "")
     check("v5: entrada desligada não mexe nos pedidos", not any(isinstance(m, (ApproveChatJoinRequest, DeclineChatJoinRequest))

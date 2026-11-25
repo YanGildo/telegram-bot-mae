@@ -1,4 +1,4 @@
-# Bot Mãe — versão 8
+# Bot Mãe — versão 9
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -43,7 +43,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 
 **📋 Canal de registros** (painel → 📋 Registros): canal ou grupo onde o bot conta o que fez
 - 🔇 silenciados (botões 🔊 Desmutar e 🚷 Banir), 🚷 banidos (♻️ Desbanir), ❗ expulsos, ⚠️ advertências (🧹 Zerar)
-- 🚪 pedidos de entrada aprovados/recusados e o motivo
+- 🚪 pedidos de entrada recusados e o motivo (aprovados não vão, para não lotar)
 - 🔁 aviso quando o acervo ou os conteúdos de uma programação completam a rodada (sem canal, o aviso vai no seu privado)
 
 **🚪 Entrada por nome e bio** (painel → 🚪 Entrada, por grupo/canal): com link de convite "pedir aprovação", o bot aprova ou recusa olhando nome e bio
