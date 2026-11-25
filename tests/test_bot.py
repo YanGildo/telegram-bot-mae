@@ -883,6 +883,41 @@ async def main():
     calls = await csay(LISTA, "e agora", chat=ANA_G)
     check("v6: tirou da lista, não apaga mais", not any(isinstance(m, (DeleteMessage,)) for _, m in calls))
 
+    # ================= v8: variações de texto =================
+    await cclick(OWNER, CP(s="msgi", a="clr", i=sm.id).pack())
+    await cclick(OWNER, CP(s="msgc", a="text", i=sm.id).pack())
+    await csay(OWNER, "Copy 1")
+    calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
+    check("v8: personalizar tem Variações de texto", any("📝 Variações de texto (1)" in buttons(m) for m in texts(calls)))
+    for t in ("Copy 2", "Copy 3"):
+        await cclick(OWNER, CP(s="msgv", a="add", i=sm.id).pack())
+        calls = await csay(OWNER, t)
+    check("v8: lista as variações", any("<b>3.</b> Copy 3" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="msgi", a="add", i=sm.id).pack())
+    for fid in ("m1", "m2"):
+        await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"),
+                                                   from_user=OWNER, photo=photo(fid)))
+    await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"),
+                                               from_user=OWNER, photo=photo("prova"), caption="Prova social!"))
+    async with db.session() as s:
+        r = await s.get(Schedule, sm.id)
+        r.max_per_day, r.content_order, r.content_cursor, r.text_cursor = 0, "seq", 0, 0
+        await s.commit()
+    caps = []
+    for _ in range(6):
+        calls = await cclick(OWNER, CP(s="sch", a="now", i=sm.id).pack())
+        caps += [m.caption for _, m in calls if isinstance(m, SendPhoto) and m.chat_id == -100604]
+    check("v8: mídias sem texto revezam as copies; a com texto próprio sai sempre com o dela",
+          caps == ["Copy 1", "Copy 2", "Prova social!", "Copy 3", "Copy 1", "Prova social!"])
+    async with db.session() as s:
+        it1 = await s.scalar(select(ScheduleItem).where(ScheduleItem.schedule_id == sm.id).order_by(ScheduleItem.seq))
+    await cclick(OWNER, CP(s="msgi", a="txt", i=sm.id, j=it1.id).pack())
+    calls = await csay(OWNER, "Texto fixo do 1")
+    check("v8: dá texto próprio a um conteúdo", any("💬 Texto fixo do 1" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="msgv", a="rm", i=sm.id, j=0).pack())
+    calls = await cclick(OWNER, CP(s="msgv", i=sm.id).pack())
+    check("v8: tirar variação", any("Copy 2" not in m.text and "<b>2.</b> Copy 3" in m.text for m in texts(calls)))
+
     # ================= v7: parcerias =================
     from app.db import Partnership, PartnerChat, ScheduleDest, ChildAdmin
     from app.child import scheduling as sch_mod

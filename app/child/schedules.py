@@ -231,6 +231,51 @@ async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
     return text, kb(*rows, [cbtn("« Voltar", "sch", "", sch.id)])
 
 
+def _variants(sch: Schedule) -> list[str]:
+    try:
+        return [t for t in json.loads(sch.text_variants or "[]") if isinstance(t, str) and t.strip()]
+    except ValueError:
+        return []
+
+
+async def screen_variants(db: Database, sch: Schedule) -> Screen:
+    var = _variants(sch)
+    lines = ["📝 <b>Variações de texto</b>\n",
+             "Cada envio usa o próximo texto da lista, em ordem (1, 2, 3, 1…). O 1 é o texto principal "
+             "(📄 Texto). Conteúdo que tem texto próprio sai sempre com o dele.\n"]
+    lines.append(f"<b>1.</b> {escape(strip_tags(sch.text_html)[:120]) or '<i>(sem texto principal)</i>'}")
+    for n, t in enumerate(var, 2):
+        lines.append(f"<b>{n}.</b> {escape(strip_tags(t)[:120])}")
+    lines.append("\n• ➕ Adicionar variação: mande o texto (formatação e emoji premium ficam).\n• 🗑 tira a variação.")
+    rows = [[cbtn("➕ Adicionar variação", "msgv", "add", sch.id, style="primary")]]
+    rows += [[cbtn(f"🗑 {n}", "msgv", "rm", sch.id, j=k) for k, n in list(enumerate(range(2, len(var) + 2)))[x:x + 5]]
+             for x in range(0, len(var), 5)]
+    return "\n".join(lines)[:4000], kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
+
+
+@router.callback_query(CP.filter(F.s == "msgv"))
+async def on_variants(cb: CallbackQuery, callback_data: CP, state: FSMContext, child: ChildBot, db: Database) -> None:
+    if not await repo.is_child_admin(db, child, cb.from_user.id):
+        await cb.answer("Só o dono e os admins do bot usam este painel.", show_alert=True)
+        return
+    a, i, j = callback_data.a, callback_data.i, callback_data.j
+    sch = await _get(db, child, i)
+    if sch is None:
+        await cb.answer("Não encontrada.", show_alert=True)
+        return
+    await state.clear()
+    if a == "add":
+        return await ask(cb, state, "msg_var", "📝 <b>Nova variação de texto</b>\n\nMande o texto. Ele entra no "
+                         "rodízio junto com o texto principal.", cbtn("❌ Cancelar", "msgv", "", i), sch_id=i)
+    if a == "rm":
+        var = _variants(sch)
+        if 0 <= j < len(var):
+            var.pop(j)
+            await _update(db, i, text_variants=json.dumps(var))
+    await cb.answer()
+    await show(cb, await screen_variants(db, await _get(db, child, i)))
+
+
 async def _items(db: Database, sch_id: int) -> list[ScheduleItem]:
     async with db.session() as s:
         return list(await s.scalars(select(ScheduleItem).where(ScheduleItem.schedule_id == sch_id)
@@ -241,18 +286,22 @@ async def screen_content(db: Database, sch: Schedule) -> Screen:
     media = load_media(sch.media)
     rows_btn, _ = parse_buttons(sch.buttons)
     n_items = len(await _items(db, sch.id))
+    n_var = len(_variants(sch))
     text = ("✍️ <b>Personalizar mensagem</b>\n\n"
-            f"📄 Texto {'✅' if sch.text_html else '❌'}\n"
+            f"📄 Texto {'✅' if sch.text_html else '❌'}" + (f" + {n_var} variação(ões)" if n_var else "") + "\n"
             f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n"
             f"🔠 Botões de link {'✅' if rows_btn else '❌'}\n"
             f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n"
             f"📚 Vários conteúdos: {n_items or '❌'}\n\n"
             "👉 Use os botões abaixo para definir cada parte. 👀 Veja mostra só aquela parte; "
             "👀 Visualização completa manda a mensagem inteira aqui, do jeito que vai sair.\n\n"
-            "📚 <b>Vários conteúdos</b>: em vez de uma mensagem só, cadastre vários posts (cada um com "
-            "texto e mídia) e a programação usa um por vez. É separado do acervo e das outras programações.")
+            "📝 <b>Variações de texto</b>: outras versões da copy. Cada envio usa a próxima (1, 2, 3, 1…).\n"
+            "📚 <b>Vários conteúdos</b>: vários posts (mídia, com ou sem texto) e a programação usa um por vez.\n"
+            "Conteúdo <b>com texto próprio</b> (ex.: vídeo de prova social) sai sempre com o texto dele; "
+            "conteúdo <b>sem texto</b> sai com a próxima variação.")
     i = sch.id
-    return text, kb([cbtn(f"📚 Vários conteúdos ({n_items})", "msgi", "", i)],
+    return text, kb([cbtn(f"📝 Variações de texto ({n_var + (1 if sch.text_html else 0)})", "msgv", "", i),
+                     cbtn(f"📚 Vários conteúdos ({n_items})", "msgi", "", i)],
                     [cbtn("📄 Texto", "msgc", "text", i), cbtn("👀 Veja", "msgc", "vt", i)],
                     [cbtn("📸 Mídias", "msgc", "media", i), cbtn("👀 Veja", "msgc", "vm", i)],
                     [cbtn("🔠 Botões de URL", "msgc", "btn", i), cbtn("👀 Veja", "msgc", "vb", i)],
@@ -283,12 +332,12 @@ async def screen_items(db: Database, sch: Schedule) -> Screen:
     lines = [f"📚 <b>Vários conteúdos</b> · {escape(sch.name or 'mensagem repetida')}\n",
              "Cada envio da programação usa <b>um</b> destes posts, " + order + ". "
              "Os botões de link, destinos e horários são os da programação. "
-             "Se um conteúdo não tiver texto, vai com o texto principal.\n",
+             "Conteúdo com 💬 texto próprio sai sempre com ele; sem texto, sai com a próxima variação de texto.\n",
              "Para adicionar: toque em ➕ e mande (ou encaminhe de qualquer grupo/canal) as mensagens aqui: "
              "cada mensagem ou álbum vira um conteúdo. Nada disso entra no acervo.\n"]
     for n, it in enumerate(items[:30], 1):
         prev = strip_tags(it.text_html)[:40]
-        lines.append(f"{n}. {media_summary(load_media(it.media))}" + (f" · {escape(prev)}" if prev else "")
+        lines.append(f"{n}. {media_summary(load_media(it.media))}" + (f" · 💬 {escape(prev)}" if prev else " · texto da vez")
                      + f" · usado {it.used_count}x")
     if not items:
         lines.append("<i>Nenhum ainda: a programação usa a mensagem principal.</i>")
@@ -297,8 +346,12 @@ async def screen_items(db: Database, sch: Schedule) -> Screen:
     rows = [[cbtn("➕ Adicionar conteúdos", "msgi", "add", sch.id, style="primary")],
             [cbtn(("✅ " if (sch.content_order or "seq") == "seq" else "") + "🔢 Em ordem", "msgi", "ord", sch.id, j=0),
              cbtn(("✅ " if sch.content_order == "random" else "") + "🎲 Sorteado", "msgi", "ord", sch.id, j=1)]]
-    rows += [[cbtn(f"🗑 {n}", "msgi", "rm", sch.id, j=it.id) for n, it in list(enumerate(items[:30], 1))[k:k + 5]]
-             for k in range(0, min(len(items), 30), 5)]
+    pairs = list(enumerate(items[:30], 1))
+    rows += [[b for n, it in pairs[k:k + 3] for b in (cbtn(f"✏️ {n}", "msgi", "txt", sch.id, j=it.id),
+                                                      cbtn(f"🗑 {n}", "msgi", "rm", sch.id, j=it.id))]
+             for k in range(0, len(pairs), 3)]
+    if items:
+        lines.append("\n✏️ n: dá (ou tira) um texto próprio para aquele conteúdo.")
     if items:
         rows.append([cbtn("🧹 Apagar todos", "msgi", "clr", sch.id)])
     return "\n".join(lines), kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
@@ -322,6 +375,10 @@ async def on_items(cb: CallbackQuery, callback_data: CP, state: FSMContext, chil
         return await show(cb, ("➕ <b>Adicionar conteúdos</b>\n\nMande ou encaminhe as mensagens agora: texto, foto, vídeo, "
                                "arquivo ou álbum (com legenda). Cada mensagem ou álbum vira um conteúdo.\n"
                                "Quando terminar, toque em ✅ Pronto.", kb([cbtn("✅ Pronto", "msgi", "", i)])))
+    if a == "txt":
+        return await ask(cb, state, "item_text", "✏️ <b>Texto próprio deste conteúdo</b>\n\nMande o texto que deve "
+                         "sair sempre com ele (ex.: a copy da prova social). Envie <code>-</code> para tirar e ele "
+                         "passar a usar as variações.", cbtn("❌ Cancelar", "msgi", "", i), sch_id=i, item_id=j)
     if a == "ord":
         await _update(db, i, content_order="seq" if j == 0 else "random")
     elif a == "rm":
@@ -591,6 +648,19 @@ async def handle_input(kind: str, data: dict, message: Message, child: ChildBot,
     if kind == "msg_text":
         await _update(db, sch.id, text_html="" if raw == "-" else (message.html_text or ""))
         return await screen_content(db, await _get(db, child, sch.id))
+    if kind == "msg_var":
+        if not raw:
+            return "Mande o texto da variação ou /cancelar."
+        await _update(db, sch.id, text_variants=json.dumps(_variants(sch) + [message.html_text]))
+        return await screen_variants(db, await _get(db, child, sch.id))
+    if kind == "item_text":
+        async with db.session() as s:
+            it = await s.get(ScheduleItem, data.get("item_id", 0))
+            if it is None or it.schedule_id != sch.id:
+                return "Conteúdo não encontrado."
+            it.text_html = "" if raw == "-" else (message.html_text or "")
+            await s.commit()
+        return await screen_items(db, await _get(db, child, sch.id))
     if kind == "msg_btn":
         if raw == "-":
             value = ""

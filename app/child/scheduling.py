@@ -222,6 +222,28 @@ async def pick_item_round(db: Database, child_id: int) -> tuple[AcervoItem | Non
         return item, "", note
 
 
+def text_pool(sch: Schedule) -> list[str]:
+    """Texto principal + variações (sem vazios)."""
+    try:
+        extra = [t for t in json.loads(sch.text_variants or "[]") if isinstance(t, str) and t.strip()]
+    except ValueError:
+        extra = []
+    return [t for t in [sch.text_html or ""] + extra if t.strip()]
+
+
+async def pick_text(db: Database, sch_id: int) -> str:
+    """Reveza as variações de texto em ordem (1, 2, 3, 1, 2…)."""
+    async with db.session() as s:
+        sch = await s.get(Schedule, sch_id)
+        pool = text_pool(sch)
+        if not pool:
+            return ""
+        n = (sch.text_cursor or 0) % len(pool)
+        sch.text_cursor = n + 1
+        await s.commit()
+        return pool[n]
+
+
 async def pick_sched_item(db: Database, sch_id: int) -> tuple[ScheduleItem | None, str]:
     """Vários conteúdos de uma mensagem repetida: escolhe o próximo (em ordem ou sorteado)."""
     async with db.session() as s:
@@ -291,8 +313,12 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
     if sch.kind in ("msg", "parc"):
         text, media, markup, above = sch.text_html, load_media(sch.media), buttons_markup(sch.buttons), sch.caption_above
         variant, round_note = await pick_sched_item(db, sch_id)
-        if variant is not None:  # vários conteúdos: usa o da vez (texto dele, ou o texto principal se vazio)
-            text, media = variant.text_html or sch.text_html, load_media(variant.media)
+        if variant is not None and variant.text_html:
+            text = variant.text_html  # conteúdo com texto próprio (ex.: prova social) usa sempre o dele
+        else:
+            text = await pick_text(db, sch_id)  # senão reveza entre o texto principal e as variações
+        if variant is not None:
+            media = load_media(variant.media)
         if not text.strip() and not media:
             await _set_error(db, sch_id, "mensagem vazia: use ✍️ Personalizar mensagem")
             return 0, "mensagem vazia"

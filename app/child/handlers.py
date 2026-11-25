@@ -323,7 +323,7 @@ async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: 
         return
     if kind.startswith("acv_"):
         result = await acervo.handle_input(kind, message, child, db, settings)
-    elif kind.startswith(("sch_", "msg_")):
+    elif kind.startswith(("sch_", "msg_", "item_")):
         result = await schedules.handle_input(kind, data, message, child, db, settings)
     elif kind.startswith("words_"):
         result = await words.handle_input(kind, data, message, child, db)

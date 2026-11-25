@@ -1,4 +1,4 @@
-# Bot Mãe — versão 7
+# Bot Mãe — versão 8
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -49,7 +49,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 **🚪 Entrada por nome e bio** (painel → 🚪 Entrada, por grupo/canal): com link de convite "pedir aprovação", o bot aprova ou recusa olhando nome e bio
 - Palavras bloqueadas (recusa ou deixa esperando você), palavras de liberação (só aprova quem tem uma), exigir @
 
-**Programações**: ✏️ nome para cada uma; 📚 vários conteúdos numa mensagem repetida (cada envio usa um, em ordem ou sorteado), enviados ou encaminhados direto no bot, separados do acervo
+**Programações**: 📝 variações de texto (cada envio usa a próxima copy: 1, 2, 3, 1…; conteúdo com texto próprio, como uma prova social, sai sempre com o dele, e ✏️ dá ou tira o texto próprio de cada conteúdo); ✏️ nome para cada uma; 📚 vários conteúdos numa mensagem repetida (cada envio usa um, em ordem ou sorteado), enviados ou encaminhados direto no bot, separados do acervo
 
 **🤝 Parcerias** (painel do bot filho → 🤝 Parcerias)
 - ➕ Nova parceria: você monta o acordo (intervalo mínimo entre posts, máximo por dia, horário, se pode foto/vídeo e botões, data final) e escolhe seus grupos onde o parceiro vai postar → 📨 convite (link do bot mãe `?start=pc_CÓDIGO` ou código)
@@ -101,7 +101,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "187/187 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "192/192 passaram" ou mais.
 
 ## Arquivos
 

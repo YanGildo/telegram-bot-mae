@@ -197,6 +197,8 @@ class Schedule(Base):
     content_order: Mapped[str | None] = mapped_column(String(8), default="seq")  # seq | random (vários conteúdos)
     content_cursor: Mapped[int | None] = mapped_column(Integer, default=0)
     content_last: Mapped[int | None] = mapped_column(Integer)
+    text_variants: Mapped[str | None] = mapped_column(Text, default="[]")  # JSON: outras versões do texto
+    text_cursor: Mapped[int | None] = mapped_column(Integer, default=0)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_error: Mapped[str | None] = mapped_column(String(300))
