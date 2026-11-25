@@ -1,4 +1,4 @@
-# Bot Mãe — versão 6
+# Bot Mãe — versão 7
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -51,6 +51,16 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 
 **Programações**: ✏️ nome para cada uma; 📚 vários conteúdos numa mensagem repetida (cada envio usa um, em ordem ou sorteado), enviados ou encaminhados direto no bot, separados do acervo
 
+**🤝 Parcerias** (painel do bot filho → 🤝 Parcerias)
+- ➕ Nova parceria: você monta o acordo (intervalo mínimo entre posts, máximo por dia, horário, se pode foto/vídeo e botões, data final) e escolhe seus grupos onde o parceiro vai postar → 📨 convite (link do bot mãe `?start=pc_CÓDIGO` ou código)
+- O parceiro aceita com um dos bots dele (pelo link ou em 📥 Tenho um convite) e escolhe os grupos dele
+- Cada um coloca o bot do outro nos grupos liberados (o painel dá o link); só nesses grupos o bot do parceiro pode ficar
+- 📣 Minha divulgação: texto, mídias, vários conteúdos e botões; o sistema não deixa passar do acordo (intervalo, máximo por dia, horário, tipo de conteúdo)
+- Todo post de parceria leva a marca d'água "🤝 Parcerias automáticas no Telegram" com link para o bot mãe (`?start=parc_ID`, que registra de onde a pessoa veio)
+- Painel mostra os grupos dos dois lados (✅ bot dentro / ❌ falta adicionar), posts de hoje e próximo envio
+- ⏸ Pausar (só quem pausou retoma), ❌ Encerrar (o bot de cada um sai dos grupos do outro e o parceiro é avisado)
+- O bot não modera (anti-spam, palavras, ban) os grupos do parceiro, e eles não aparecem nos seus grupos
+
 **🔨 Ban em todos os grupos** (veio do bot de clipes)
 - Você (ou um admin do bot, inclusive anônimo) bane alguém pelo Telegram num grupo → o bot bane pelo ID em todos os outros grupos/canais onde é admin (menos o canal de registros). Bans do Group Help e de outros admins não espalham; admins do bot nunca são banidos
 - `/banirtodos ID` no privado, ou respondendo à pessoa no grupo (o comando some); `/desbanirtodos ID`
@@ -91,7 +101,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "160/160 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "187/187 passaram" ou mais.
 
 ## Arquivos
 
@@ -114,6 +124,7 @@ app/
   child/joins.py     entrada por nome e bio, tela do canal de registros
   child/logs.py      envio para o canal de registros
   child/moderation.py ban em todos os grupos e anti-spam
+  child/partners.py  parcerias (acordo, convite, grupos, divulgação, marca d'água)
   child/content.py   montar e enviar posts (mídias e botões)
 servidor/            instalar.sh e atualizar.sh
 docs/PLANO.md        plano completo

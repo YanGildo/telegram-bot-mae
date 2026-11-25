@@ -26,7 +26,7 @@ router = Router(name="programacoes")
 INTERVALS = [5, 10, 15, 20, 30, 45, 60, 120, 180, 240, 360, 720, 1440]
 MAXES = [0, 1, 2, 3, 5, 10, 24, 48]
 AUTODEL = [0, 5, 15, 30, 60, 180, 360, 720, 1440]
-KIND_NAME = {"msg": "Mensagem", "acervo": "Programação do acervo"}
+KIND_NAME = {"msg": "Mensagem", "acervo": "Programação do acervo", "parc": "Divulgação na parceria"}
 PIN_TEXT = {0: "❌", 1: "✅🔕", 2: "✅🔔"}
 
 
@@ -111,7 +111,12 @@ async def screen_sch(child: ChildBot, db: Database, settings, sch_id: int) -> Sc
              f"⌛ Exclusão automática: {interval_text(sch.auto_delete_min) if sch.auto_delete_min else '❌'}",
              f"📍 Destinos: {dcount}",
              f"\n🚀 Próximo envio: {next_text(sch, settings.tz)}"]
-    if sch.kind == "msg":
+    if sch.kind == "parc":
+        from .partners import get_p, terms_text
+        p = await get_p(db, sch.partnership_id or 0)
+        if p is not None:
+            lines.insert(1, "🤝 <b>Acordo da parceria</b> (o sistema não deixa passar disso)\n" + terms_text(p) + "\n")
+    if sch.kind in ("msg", "parc"):
         lines.insert(1, f"📝 Conteúdo: {'texto ✅' if sch.text_html else 'texto ❌'} · "
                         f"{media_summary(load_media(sch.media))} · "
                         f"{'botões ✅' if sch.buttons else 'botões ❌'}")
@@ -126,7 +131,7 @@ async def screen_sch(child: ChildBot, db: Database, settings, sch_id: int) -> Sc
                  "• Exclusão automática: apaga cada mensagem depois do tempo escolhido.")
     i = sch.id
     rows = [[cbtn("✏️ Nome", "sch", "name", i)]]
-    if sch.kind == "msg":
+    if sch.kind in ("msg", "parc"):
         rows[0].insert(0, cbtn("✍️ Personalizar mensagem", "msgc", "", i))
     rows += [[cbtn("🕑 Cronograma", "sch", "start", i), cbtn("🔁 Repetição", "sch", "trig", i)],
              [cbtn("📅 Dias da semana", "sch", "days", i), cbtn("⏰ Horário permitido", "sch", "win", i)],
@@ -137,8 +142,8 @@ async def screen_sch(child: ChildBot, db: Database, settings, sch_id: int) -> Sc
              [cbtn("⏸ Desativar" if sch.enabled else "▶️ Ativar", "sch", "tog", i,
                    style=None if sch.enabled else "success"),
               cbtn("🚀 Enviar agora", "sch", "now", i)],
-             [cbtn("🗑 Excluir", "sch", "del", i)],
-             [cbtn("« Voltar", "schs", sch.kind)]]
+             [cbtn("🗑 Excluir", "sch", "del", i)] if sch.kind != "parc" else None,
+             [cbtn("« Parceria", "pt", "", sch.partnership_id) if sch.kind == "parc" else cbtn("« Voltar", "schs", sch.kind)]]
     return "\n".join(lines), kb(*rows)
 
 
@@ -149,14 +154,16 @@ def _br(iso: str | None) -> str:
     return f"{d}/{m}/{y}"
 
 
-def screen_trigger(sch: Schedule) -> Screen:
+def screen_trigger(sch: Schedule, min_interval: int = 0) -> Screen:
     text = ("🔁 <b>Repetição</b>\n\n"
             "• <b>Tempo</b>: escolha de quanto em quanto tempo (mínimo 5 minutos).\n"
             "• <b>Mensagens</b>: posta depois de tantas mensagens no grupo (bom para não postar em grupo parado).\n\n"
             f"Agora: <b>{repeat_text(sch)}</b>")
     btns = [cbtn(("✅ " if sch.trigger == "time" and sch.interval_min == m else "") + interval_text(m)
                  .replace(" minutos", " min").replace(" horas", "h").replace(" hora", "h"), "sch", "setint", sch.id, j=m)
-            for m in INTERVALS]
+            for m in INTERVALS if m >= min_interval]
+    if min_interval:
+        text += f"\n\n🤝 Pela parceria, no mínimo {interval_text(min_interval)}."
     return text, kb(btns[0:4], btns[4:8], btns[8:12], btns[12:],
                     [cbtn("✏️ Outro tempo", "sch", "intc", sch.id),
                      cbtn(("✅ " if sch.trigger == "msgs" else "") + "💬 A cada N mensagens", "sch", "msgs", sch.id)],
@@ -188,6 +195,18 @@ def screen_auto(sch: Schedule) -> Screen:
 
 
 async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
+    if sch.kind == "parc":
+        async with db.session() as s:
+            rows_ = list(await s.scalars(select(ChildChat).where(ChildChat.child_id == child.id,
+                                                                 ChildChat.partner_of == sch.partnership_id)))
+            chosen = set(await s.scalars(select(ScheduleDest.chat_row_id).where(ScheduleDest.schedule_id == sch.id)))
+        text = ("📍 <b>Destinos</b>\n\nOs grupos do parceiro onde o seu bot já entrou (os que ele liberou). "
+                "Toque para pausar ou voltar a postar em um deles.")
+        if not rows_:
+            text += "\n\n<i>O parceiro ainda não colocou o seu bot em nenhum grupo dele.</i>"
+        btns = [[cbtn(("✅ " if c.id in chosen else "▫️ ") + (c.title or str(c.chat_id))[:40], "sch", "dsttog", sch.id,
+                      j=c.id)] for c in rows_ if c.bot_status in ("administrator", "member", "creator")]
+        return text, kb(*btns, [cbtn("« Voltar", "sch", "", sch.id)])
     acv = await get_acervo(db, child.id)
     async with db.session() as s:
         log_chat = (await s.get(ChildBot, child.id)).log_chat_id
@@ -444,14 +463,22 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         return await ask(cb, state, "sch_start", "🕑 <b>Cronograma</b>\n\nEnvie o horário de referência, ex.: "
                          "<code>23:23</code>. Os envios saem nesse horário e de tanto em tanto a partir dele.",
                          cbtn("❌ Cancelar", "sch", "", i), sch_id=i)
+    pmin, pmax = 0, 0
+    if sch.kind == "parc":
+        from .partners import get_p
+        p = await get_p(db, sch.partnership_id or 0)
+        pmin, pmax = (p.min_interval, p.max_day) if p else (0, 0)
     if a == "trig":
         await cb.answer()
-        return await show(cb, screen_trigger(sch))
+        return await show(cb, screen_trigger(sch, pmin))
     if a == "setint" and j >= MIN_INTERVAL:
+        if j < pmin:
+            await cb.answer(f"O acordo da parceria é de no mínimo {interval_text(pmin)}.", show_alert=True)
+            return
         await _update(db, i, interval_min=j, trigger="time")
         await reschedule(db, i, tz)
         await cb.answer(f"A cada {interval_text(j)}.")
-        return await show(cb, screen_trigger(await _get(db, child, i)))
+        return await show(cb, screen_trigger(await _get(db, child, i), pmin))
     if a == "intc":
         return await ask(cb, state, "sch_int", "✏️ <b>Outro tempo</b>\n\nEnvie em minutos (ex.: <code>90</code>) "
                          "ou em horas com h (ex.: <code>8h</code>). Mínimo 5 minutos.",
@@ -482,6 +509,9 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
                          "Envie <code>-</code> para tirar as datas.", cbtn("❌ Cancelar", "sch", "", i), sch_id=i)
     if a in ("max", "setmax"):
         if a == "setmax" and j in MAXES:
+            if pmax and (j == 0 or j > pmax):
+                await cb.answer(f"O acordo da parceria é de até {pmax} por dia.", show_alert=True)
+                return
             await _update(db, i, max_per_day=j)
         await cb.answer()
         return await show(cb, screen_max(await _get(db, child, i)))
@@ -504,6 +534,9 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
                     await s.commit()
         await cb.answer()
         return await show(cb, await screen_dests(child, db, sch))
+    if a in ("del", "del2") and sch.kind == "parc":
+        await cb.answer("A divulgação da parceria não se exclui: desative ou encerre a parceria.", show_alert=True)
+        return
     if a == "del":
         await cb.answer()
         return await show(cb, ("🗑 <b>Excluir esta programação?</b>",
@@ -526,7 +559,7 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         if not sch.enabled and not await _dest_count(db, i):
             await cb.answer("Escolha os destinos antes de ativar (📍 Destinos).", show_alert=True)
             return
-        if not sch.enabled and sch.kind == "msg" and not sch.text_html and not load_media(sch.media) \
+        if not sch.enabled and sch.kind in ("msg", "parc") and not sch.text_html and not load_media(sch.media) \
                 and not await _items(db, i):
             await cb.answer("A mensagem está vazia. Use ✍️ Personalizar mensagem.", show_alert=True)
             return
@@ -582,6 +615,11 @@ async def handle_input(kind: str, data: dict, message: Message, child: ChildBot,
         minutes = int(mh.group(1)) * 60 if mh else (int(raw) if raw.isdigit() else 0)
         if minutes < 5 or minutes > 10080:
             return "Envie de 5 minutos a 7 dias (ex.: <code>90</code> ou <code>8h</code>) ou /cancelar."
+        if sch.kind == "parc":
+            from .partners import get_p
+            p = await get_p(db, sch.partnership_id or 0)
+            if p and minutes < p.min_interval:
+                return f"O acordo da parceria é de no mínimo {interval_text(p.min_interval)}. Envie um tempo maior ou /cancelar."
         await _update(db, sch.id, interval_min=minutes, trigger="time")
     elif kind == "sch_msgs":
         if not raw.isdigit() or not 1 <= int(raw) <= 10000:

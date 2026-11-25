@@ -277,6 +277,10 @@ async def check_spam(message: Message, bot: Bot, child: ChildBot, db: Database) 
     blocked = set(spam_list(row))
     if not blocked:
         return False
+    async with db.session() as s:
+        if await s.scalar(select(ChildChat.id).where(ChildChat.child_id == child.id, ChildChat.chat_id == message.chat.id,
+                                                     ChildChat.partner_of.is_not(None))):
+            return False  # grupo de parceiro: quem modera é o dono dele
     hit = (_senders(message) | _mentions(message)) & blocked
     if not hit or (message.from_user and await repo.is_child_admin(db, child, message.from_user.id)):
         return False

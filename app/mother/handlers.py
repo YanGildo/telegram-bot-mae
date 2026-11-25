@@ -136,8 +136,32 @@ def screen_parcerias() -> Screen:
             "3. Cada um coloca o bot do outro nos grupos combinados.\n"
             "4. Os bots postam sozinhos e o sistema garante o combinado. "
             "Dá para pausar ou encerrar quando quiser.\n\n"
-            "🚧 As parcerias estão chegando. Crie seu bot agora para já deixar tudo pronto.")
+            "<b>Começar:</b> crie seu bot aqui e, no painel dele, toque em 🤝 Parcerias.\n"
+            "Todo post de parceria leva uma marca d'água discreta com o link das parcerias automáticas.")
     return text, kb([mbtn("➕ Criar seu bot", "new", style="primary")], [mbtn("« Início", "home")])
+
+
+async def screen_invite(code: str, uid: int, db: Database, settings: Settings, manager: BotManager,
+                        state: FSMContext) -> Screen:
+    from ..child.partners import preview_invite
+    from ..db import Partnership
+    async with db.session() as s:
+        p = await s.scalar(select(Partnership).where(Partnership.code == code.upper()))
+    if p is None or p.status != "invited":
+        return "Esse convite não está mais valendo. Peça um novo para o parceiro.", kb([mbtn("« Início", "home")])
+    a = await repo.get_bot(db, p.a_child_id)
+    mine = [b for b in await repo.bots_of(db, uid) if b.id != p.a_child_id and b.status == "active"]
+    await state.update_data(invite=p.id)
+    text = preview_invite(p, a) + "\n\n"
+    if not mine:
+        text += ("Para aceitar, você precisa de um bot seu aqui. Toque em ➕ Criar seu bot e depois abra este "
+                 "link de novo." if await repo.can_create(db, settings, uid) else
+                 "Para aceitar, você precisa de um bot seu aqui, mas a criação ainda está fechada. "
+                 "Peça para liberarem você.")
+        return text, kb([mbtn("➕ Criar seu bot", "new", style="primary")], [mbtn("« Início", "home")])
+    text += "Escolha com qual dos seus bots aceitar:"
+    rows = [[mbtn(f"✅ Aceitar com @{b.username}", "pcok", i=b.id)] for b in mine]
+    return text, kb(*rows, [mbtn("❌ Recusar", "home")])
 
 
 def screen_help() -> Screen:
@@ -212,6 +236,9 @@ async def start(message: Message, command: CommandObject, state: FSMContext, db:
     arg = (command.args or "").strip()
     referrer = arg if arg.startswith(("parc_", "filho_")) else None
     await repo.touch_account(db, message.from_user, referrer)
+    if arg.startswith("pc_"):
+        await send(message, await screen_invite(arg[3:], message.from_user.id, db, settings, manager, state))
+        return
     if arg == "parcerias" or arg.startswith("parc_"):
         await send(message, screen_parcerias())
         return
@@ -266,6 +293,27 @@ async def on_button(cb: CallbackQuery, callback_data: MP, state: FSMContext, db:
     if s_ == "help":
         await cb.answer()
         await show(cb, screen_help())
+        return
+    if s_ == "pcok":
+        from ..child.partners import accept, get_p
+        pid = (await state.get_data()).get("invite")
+        p = await get_p(db, pid or 0)
+        b = await repo.get_bot(db, i)
+        if p is None or b is None or b.owner_id != uid and not await repo.is_platform_admin(db, settings, uid):
+            await cb.answer("Convite não encontrado.", show_alert=True)
+            return
+        err = await accept(db, manager, p, b, uid)
+        if err:
+            await cb.answer(err, show_alert=True)
+            return
+        await state.clear()
+        await cb.answer("Parceria aceita!")
+        await show(cb, (f"🤝 <b>Parceria aceita!</b>\n\nAgora, no painel do @{escape(b.username)} → 🤝 Parcerias:\n"
+                        "1. 👥 Escolha os seus grupos onde o parceiro vai postar.\n"
+                        "2. ➕ Coloque o bot dele nesses grupos.\n"
+                        "3. 📣 Monte a sua divulgação e ative.",
+                        kb([url(f"⚙️ Abrir @{b.username}", f"https://t.me/{b.username}?start=painel")],
+                           [mbtn("« Início", "home")])))
         return
 
     if s_ == "bot":

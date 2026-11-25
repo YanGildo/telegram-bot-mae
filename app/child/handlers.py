@@ -15,7 +15,7 @@ from .. import repo
 from ..db import ChildAdmin, ChildBot, ChildChat, Database, utcnow
 from ..manager import BotManager
 from ..ui import CP, Screen, cbtn, kb, send, show, url
-from . import acervo, joins, moderation, schedules, words
+from . import acervo, joins, moderation, partners, schedules, words
 from .flow import ChildFlow
 from .scheduling import get_acervo, run_schedule
 
@@ -90,6 +90,7 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
             "• 🔁 <b>Mensagens repetidas</b>: mensagens programadas, sem limite\n"
             "• 🚫 <b>Palavras proibidas</b>: censura no chat, com a punição que você escolher\n"
             "• 🚪 <b>Entrada</b>: aprova ou recusa pedidos de entrada pelo nome e pela bio\n"
+            "• 🤝 <b>Parcerias</b>: troque divulgação com outros grupos, com acordo e marca d'água\n"
             "• 🔨 <b>Ban em todos</b>: baniu num grupo, o bot bane em todos os outros (também por /banirtodos ID)\n"
             "• 🧹 <b>Anti-spam</b>: apaga mensagens de @ de listas de divulgação\n"
             "• 📋 <b>Registros</b>: canal onde o bot conta o que fez (com botões para desmutar e desbanir)\n"
@@ -99,7 +100,8 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
     return text, kb([cbtn(f"👥 Grupos e canais ({len(chats)})", "chats")],
                     [cbtn("🗂 Acervo", "acv"), cbtn("🔁 Mensagens repetidas", "schs", "msg")],
                     [cbtn("🚫 Palavras proibidas", "words"), cbtn("🚪 Entrada", "joins")],
-                    [cbtn("🔨 Ban em todos", "ban"), cbtn("🧹 Anti-spam", "spam")],
+                    [cbtn("🤝 Parcerias", "parc"), cbtn("🔨 Ban em todos", "ban")],
+                    [cbtn("🧹 Anti-spam", "spam")],
                     [cbtn("📋 Registros", "logc"), cbtn("👮 Admins do bot", "admins")],
                     [cbtn("❓ Ajuda", "help")])
 
@@ -304,7 +306,8 @@ async def cmd_acervo(message: Message, bot: Bot, child: ChildBot, db: Database, 
 
 
 @router.message(StateFilter(ChildFlow.input), F.chat.type == ChatType.PRIVATE)
-async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: Database, settings) -> None:
+async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: Database, settings,
+                      manager: BotManager) -> None:
     if not await repo.is_child_admin(db, child, message.from_user.id):
         await state.clear()
         return
@@ -328,6 +331,8 @@ async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: 
         result = await joins.handle_input(kind, data, message, child, db)
     elif kind.startswith("mod_"):
         result = await moderation.handle_input(kind, message, message.bot, child, db)
+    elif kind.startswith("parc_"):
+        result = await partners.handle_input(kind, data, message, child, db, settings, manager)
     else:
         await state.clear()
         return
@@ -483,6 +488,30 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
     chat, new, old, who = event.chat, event.new_chat_member, event.old_chat_member, event.from_user
     title = escape(chat.title or str(chat.id))
     joined = new.status in ("member", "administrator", "creator") and old.status in ("left", "kicked")
+    partnership = None
+    if joined and who is not None and not await repo.is_child_admin(db, child, who.id):
+        partnership = await partners.partner_admitting(db, child, who.id, chat.id)  # parceiro colocou o bot
+    async with db.session() as s:
+        existing = await s.scalar(select(ChildChat).where(ChildChat.child_id == child.id, ChildChat.chat_id == chat.id))
+    if partnership is None and existing is not None and existing.partner_of and not joined:
+        partnership = await partners.get_p(db, existing.partner_of)
+    if partnership is not None:
+        async with db.session() as s:
+            row = await s.scalar(select(ChildChat).where(ChildChat.child_id == child.id, ChildChat.chat_id == chat.id))
+            if row is None:
+                row = ChildChat(child_id=child.id, chat_id=chat.id, type=chat.type)
+                s.add(row)
+            row.title, row.username, row.type, row.partner_of = chat.title or "", chat.username, chat.type, partnership.id
+            _apply_member(row, new)
+            await s.commit()
+            rid = row.id
+        await partners.sync_dests(db, partnership)
+        state_txt = "entrou no" if new.status in ("member", "administrator", "creator") else "saiu do"
+        await _tell_owner(bot, manager, child, f"🤝 O @{escape(child.username)} {state_txt} grupo <b>{title}</b> do "
+                                               "parceiro. A divulgação da parceria usa esse grupo automaticamente.")
+        logger.info("@%s: grupo de parceiro %s (%s, parceria %s, linha %s)", child.username, chat.id, new.status,
+                    partnership.id, rid)
+        return
     if joined and (who is None or not await repo.is_child_admin(db, child, who.id)):
         try:
             await bot.leave_chat(chat.id)
@@ -524,4 +553,4 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
 
 
 # as telas de acervo, programações e palavras ficam em arquivos próprios (vêm depois dos comandos acima)
-router.include_routers(moderation.router, schedules.router, acervo.router, joins.router, words.router)
+router.include_routers(moderation.router, partners.router, schedules.router, acervo.router, joins.router, words.router)

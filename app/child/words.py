@@ -263,6 +263,13 @@ async def punish(bot: Bot, chat_id: int, user_id: int, action: str, minutes: int
 @router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ~F.text.startswith("/banirtodos"))
 async def on_group_text(message: Message, bot: Bot, child: ChildBot, db: Database, settings) -> None:
     from .moderation import check_spam
+    async with db.session() as s:
+        partner_row = await s.scalar(select(ChildChat.id).where(ChildChat.child_id == child.id,
+                                                                ChildChat.chat_id == message.chat.id,
+                                                                ChildChat.partner_of.is_not(None)))
+    if partner_row is not None:  # grupo de parceiro: só conta mensagens, não modera
+        await on_group_message(bot, db, settings, child.id, message.chat.id)
+        return
     if await check_spam(message, bot, child, db):
         return
     user = message.from_user

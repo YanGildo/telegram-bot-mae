@@ -69,6 +69,7 @@ async def main() -> None:
     await manager.start_all()
     pruner = asyncio.create_task(prune_loop(db))
     from .child import scheduling
+    scheduling.MOTHER_USERNAME = manager.mother_username
     scheduler = asyncio.create_task(scheduling.loop(manager))
 
     logger.info("Bot mãe @%s no ar. Ctrl+C para parar.", me.username)

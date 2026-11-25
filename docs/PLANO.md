@@ -89,11 +89,11 @@ Anti-spam por @ (com espera), ban em todos os grupos (só ban feito pelo dono/ad
 | 5. Funções do bot atual | Anti-spam, ban em todos, logs, moderação, grade |
 | 6. No ar | Mesmo servidor, serviço separado; testes; passo a passo de atualização |
 | Depois | Abrir para outras pessoas: planos, limites, pagamento |
-| Depois | 🤝 Parcerias entre bots filhos (precisa de mais de um dono na plataforma) |
+| ✅ Parcerias | 🤝 Parcerias entre bots filhos, com acordo, convite e marca d'água (versão 7) |
 
 ## Situação (versão 3)
 
-Etapas 1 a 4 prontas e testadas. Próximas: 5 (funções do bot de clipes) e Parcerias.
+Etapas 1 a 4, parcerias, canal de registros, entrada por nome/bio, ban em todos e anti-spam prontos (versão 7). Pendente: abrir para outras pessoas com planos e pagamento (decidir preço, limites e forma de pagamento). O envio de clipes com moderação continua no bot de clipes, separado.
 
 ## Pendente que existia antes da Etapa 1 (resolvido)
 

@@ -91,6 +91,7 @@ class ChildChat(Base):
     can_post: Mapped[bool] = mapped_column(Boolean, default=False)
     can_pin: Mapped[bool] = mapped_column(Boolean, default=False)
     added_by: Mapped[int | None] = mapped_column(BigInteger)
+    partner_of: Mapped[int | None] = mapped_column(Integer)  # grupo do PARCEIRO (id da parceria): não é seu
     checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -192,6 +193,7 @@ class Schedule(Base):
     buttons: Mapped[str] = mapped_column(Text, default="")
     caption_above: Mapped[bool] = mapped_column(Boolean, default=False)  # mídia abaixo do texto
     name: Mapped[str | None] = mapped_column(String(60))
+    partnership_id: Mapped[int | None] = mapped_column(Integer, index=True)  # divulgação de uma parceria
     content_order: Mapped[str | None] = mapped_column(String(8), default="seq")  # seq | random (vários conteúdos)
     content_cursor: Mapped[int | None] = mapped_column(Integer, default=0)
     content_last: Mapped[int | None] = mapped_column(Integer)
@@ -255,6 +257,43 @@ class WordFilter(Base):
     warn_then: Mapped[str] = mapped_column(String(8), default="mute")  # mute | kick | ban
     match: Mapped[str] = mapped_column(String(8), default="contains")  # contains | exact
     words: Mapped[str] = mapped_column(Text, default="")  # uma por linha
+
+
+class Partnership(Base):
+    """Parceria de divulgação entre dois bots filhos: um posta nos grupos do outro, dentro do acordo."""
+
+    __tablename__ = "partnerships"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    a_child_id: Mapped[int] = mapped_column(Integer, index=True)  # quem convidou
+    b_child_id: Mapped[int | None] = mapped_column(Integer, index=True)  # quem aceitou
+    status: Mapped[str] = mapped_column(String(10), default="draft")  # draft | invited | active | paused | ended
+    min_interval: Mapped[int] = mapped_column(Integer, default=60)  # minutos entre posts, mínimo combinado
+    max_day: Mapped[int] = mapped_column(Integer, default=10)  # posts por dia em cada grupo
+    window_start: Mapped[int] = mapped_column(Integer, default=0)
+    window_end: Mapped[int] = mapped_column(Integer, default=1440)
+    allow_media: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_buttons: Mapped[bool] = mapped_column(Boolean, default=True)
+    end_date: Mapped[str | None] = mapped_column(String(10))
+    paused_by: Mapped[int | None] = mapped_column(Integer)  # child_id de quem pausou
+    ended_by: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class PartnerChat(Base):
+    """Grupo/canal que um lado liberou para o parceiro postar."""
+
+    __tablename__ = "partner_chats"
+    __table_args__ = (UniqueConstraint("partnership_id", "chat_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    partnership_id: Mapped[int] = mapped_column(ForeignKey("partnerships.id", ondelete="CASCADE"), index=True)
+    owner_child_id: Mapped[int] = mapped_column(Integer)  # dono do grupo
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    title: Mapped[str] = mapped_column(String(256), default="")
+    type: Mapped[str] = mapped_column(String(16), default="supergroup")
 
 
 class ChildBan(Base):

@@ -883,6 +883,148 @@ async def main():
     calls = await csay(LISTA, "e agora", chat=ANA_G)
     check("v6: tirou da lista, não apaga mais", not any(isinstance(m, (DeleteMessage,)) for _, m in calls))
 
+    # ================= v7: parcerias =================
+    from app.db import Partnership, PartnerChat, ScheduleDest, ChildAdmin
+    from app.child import scheduling as sch_mod
+    async with db.session() as s:  # Ana deixa de ser admin do bot do Yan: entra só como parceira
+        for x in await s.scalars(select(ChildAdmin).where(ChildAdmin.child_id == c1.id, ChildAdmin.telegram_user_id == 222)):
+            await s.delete(x)
+        await s.commit()
+    sch_mod.MOTHER_USERNAME = "mae_bot"
+    c2bot = manager.bot_for(c2.id)
+    AG2 = Chat(id=-100710, type="supergroup", title="Grupo da Ana 2")
+
+    async def c2click(user, data):
+        return await click(user, data, bot=c2bot, dp=child_dp)
+
+    async def c2say(user, text, chat=None):
+        return await say(user, text, bot=c2bot, dp=child_dp, chat=chat)
+
+    async def join_as(bot_obj, bot_user, chat, by, member):
+        ev = ChatMemberUpdated(chat=chat, from_user=by, date=NOW, old_chat_member=ChatMemberLeft(user=bot_user),
+                               new_chat_member=member)
+        return await feed(child_dp, bot_obj, my_chat_member=ev)
+
+    await join_as(c2bot, BOTS["700000002"], AG2, ANA, admin_member(BOTS["700000002"]))
+    async with db.session() as s:
+        ag2_row = await s.scalar(select(ChildChat).where(ChildChat.child_id == c2.id, ChildChat.chat_id == -100710))
+        g7_row = await s.scalar(select(ChildChat).where(ChildChat.child_id == c1.id, ChildChat.chat_id == -100606))
+
+    calls = await cclick(OWNER, CP(s="parc").pack())
+    check("parc: tela explica e tem Nova parceria", any("➕ Nova parceria" in buttons(m) and "acordo" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="parc", a="new").pack())
+    async with db.session() as s:
+        p1 = await s.scalar(select(Partnership).where(Partnership.a_child_id == c1.id))
+    await cclick(OWNER, CP(s="ptt", a="setint", i=p1.id, j=30).pack())
+    await cclick(OWNER, CP(s="ptt", a="setmax", i=p1.id, j=3).pack())
+    await cclick(OWNER, CP(s="ptt", a="btns", i=p1.id).pack())
+    calls = await cclick(OWNER, CP(s="ptt", a="invite", i=p1.id).pack())
+    check("parc: convite exige escolher grupos antes", any("Escolha antes" in (m.text or "") for _, m in calls
+                                                           if type(m).__name__ == "AnswerCallbackQuery"))
+    await cclick(OWNER, CP(s="ptg", a="tog", i=p1.id, j=g7_row.id).pack())
+    calls = await cclick(OWNER, CP(s="ptt", a="invite", i=p1.id).pack())
+    p1 = await __import__("app.child.partners", fromlist=["x"]).get_p(db, p1.id)
+    check("parc: convite gerado com link do bot mãe e código", p1.status == "invited" and any(
+        f"start=pc_{p1.code}" in m.text and "30 minutos" in m.text and "Até 3" in m.text for m in texts(calls)))
+
+    calls = await say(ANA, f"/start pc_{p1.code}")
+    check("parc: link do convite mostra o acordo e os bots da pessoa", any(
+        "Convite de parceria" in m.text and "✅ Aceitar com @filho2_bot" in buttons(m) for m in texts(calls)))
+    calls = await click(ANA, MP(s="pcok", i=c2.id).pack())
+    p1 = await __import__("app.child.partners", fromlist=["x"]).get_p(db, p1.id)
+    check("parc: aceitar ativa e avisa quem convidou", p1.status == "active" and p1.b_child_id == c2.id
+          and any(m.chat_id == 111 and "Parceria aceita" in m.text for m in texts(calls)))
+    async with db.session() as s:
+        schs_p = list(await s.scalars(select(Schedule).where(Schedule.partnership_id == p1.id)))
+    check("parc: cada lado ganha a sua divulgação (desligada)", len(schs_p) == 2 and not any(x.enabled for x in schs_p))
+    sch_yan = next(x for x in schs_p if x.child_id == c1.id)
+
+    await c2click(ANA, CP(s="ptg", a="tog", i=p1.id, j=ag2_row.id).pack())
+    calls = await join_as(cbot, BOTS["700000001"], AG2, ANA, ChatMemberMember(user=BOTS["700000001"]))
+    check("parc: parceiro coloca meu bot no grupo dele e ele fica", not any(isinstance(m, LeaveChat) for _, m in calls))
+    calls = await join_as(c2bot, BOTS["700000002"], G7, OWNER, ChatMemberMember(user=BOTS["700000002"]))
+    check("parc: eu coloco o bot dele no meu grupo liberado", not any(isinstance(m, LeaveChat) for _, m in calls))
+    calls = await join_as(cbot, BOTS["700000001"], Chat(id=-100711, type="supergroup", title="Outro da Ana"), ANA,
+                          ChatMemberMember(user=BOTS["700000001"]))
+    check("parc: grupo NÃO liberado continua bloqueado", any(isinstance(m, LeaveChat) for _, m in calls))
+    async with db.session() as s:
+        dests = list(await s.scalars(select(ScheduleDest).where(ScheduleDest.schedule_id == sch_yan.id)))
+    check("parc: destinos da minha divulgação = grupos liberados dele", len(dests) == 1)
+    calls = await cclick(OWNER, CP(s="chats").pack())
+    check("parc: grupo do parceiro não aparece nos meus grupos", not any("Grupo da Ana 2" in m.text for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="pt", i=p1.id).pack())
+    check("parc: painel mostra grupos dos dois lados com ✅", any("✅ Grupo 7" in m.text and "✅ Grupo da Ana 2" in m.text
+                                                                  for m in texts(calls)))
+
+    # divulgação
+    calls = await cclick(OWNER, CP(s="sch", a="trig", i=sch_yan.id).pack())
+    check("parc: repetição não oferece menos que o acordo", any(not ({"5 min", "10 min", "15 min", "20 min"} & set(buttons(m)))
+                                                                and "✅ 30 min" in buttons(m) and "Pela parceria" in m.text
+                                                                for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="sch", a="setmax", i=sch_yan.id, j=10).pack())
+    check("parc: máximo por dia não passa do acordo", any("até 3 por dia" in (m.text or "") for _, m in calls
+                                                          if type(m).__name__ == "AnswerCallbackQuery"))
+    await cclick(OWNER, CP(s="msgc", a="text", i=sch_yan.id).pack())
+    await csay(OWNER, "Conheça meu grupo!")
+    await cclick(OWNER, CP(s="msgc", a="btn", i=sch_yan.id).pack())
+    await csay(OWNER, "Entrar - t.me/meugrupo")
+    calls = await cclick(OWNER, CP(s="sch", a="now", i=sch_yan.id).pack())
+    post = [m for _, m in calls if isinstance(m, SendMessage) and m.chat_id == -100710]
+    check("parc: posta no grupo do parceiro com a marca d'água", post and "Conheça meu grupo!" in post[0].text
+          and "start=parc_" in post[0].text and "Parcerias automáticas" in post[0].text)
+    check("parc: acordo sem botões tira os botões", post and post[0].reply_markup is None)
+    calls = await cclick(OWNER, CP(s="sch", a="now", i=sch_yan.id).pack())
+    check("parc: não passa do intervalo mínimo combinado", not any(isinstance(m, SendMessage) and m.chat_id == -100710
+                                                                   for _, m in calls)
+          and any("no mínimo 30 minutos" in (m.text or "") for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="sch", a="del", i=sch_yan.id).pack())
+    check("parc: divulgação da parceria não se exclui", any("não se exclui" in (m.text or "") for _, m in calls
+                                                             if type(m).__name__ == "AnswerCallbackQuery"))
+
+    # grupo do parceiro não é moderado pelo meu bot
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=AG2, from_user=BIA,
+                       text="vem pro @outrocanal", entities=[MessageEntity(type="mention", offset=8, length=11)]))
+    check("parc: meu bot não modera o grupo do parceiro", not any(isinstance(m, (DeleteMessage, BanChatMember)) for _, m in calls))
+
+    # pausar / retomar
+    await c2click(ANA, CP(s="ptt", a="pause", i=p1.id).pack())
+    async with db.session() as s:
+        r = await s.get(Schedule, sch_yan.id)
+        r.last_run_at = None
+        await s.commit()
+    sent, why = await sch_mod.run_schedule(cbot, db, settings, sch_yan.id, force=True)
+    check("parc: pausada ninguém posta", sent == 0 and "não está ativa" in why)
+    calls = await cclick(OWNER, CP(s="ptt", a="resume", i=p1.id).pack())
+    check("parc: só quem pausou retoma", any("só ele retoma" in (m.text or "") for _, m in calls
+                                             if type(m).__name__ == "AnswerCallbackQuery"))
+    await c2click(ANA, CP(s="ptt", a="resume", i=p1.id).pack())
+    sent, why = await sch_mod.run_schedule(cbot, db, settings, sch_yan.id, force=True)
+    check("parc: retomada volta a postar", sent == 1)
+
+    # convite por código e parceria duplicada
+    await c2click(ANA, CP(s="parc", a="new").pack())
+    async with db.session() as s:
+        p2 = await s.scalar(select(Partnership).where(Partnership.a_child_id == c2.id))
+    await c2click(ANA, CP(s="ptg", a="tog", i=p2.id, j=ag2_row.id).pack())
+    await c2click(ANA, CP(s="ptt", a="invite", i=p2.id).pack())
+    p2 = await __import__("app.child.partners", fromlist=["x"]).get_p(db, p2.id)
+    await cclick(OWNER, CP(s="parc", a="code").pack())
+    calls = await csay(OWNER, p2.code.lower())
+    check("parc: não deixa duas parcerias ativas entre os mesmos bots", any("já têm uma parceria" in m.text for m in texts(calls)))
+    await csay(OWNER, "/cancelar")
+
+    # encerrar
+    await cclick(OWNER, CP(s="ptt", a="end1", i=p1.id).pack())
+    calls = await cclick(OWNER, CP(s="ptt", a="end2", i=p1.id).pack())
+    left = {(b, m.chat_id) for b, m in calls if isinstance(m, LeaveChat)}
+    check("parc: encerrar tira o bot de cada um dos grupos do outro", (700000001, -100710) in left and (700000002, -100606) in left)
+    check("parc: encerrar avisa o parceiro", any(m.chat_id == 222 and "encerrada" in m.text for m in texts(calls)))
+    sent, why = await sch_mod.run_schedule(cbot, db, settings, sch_yan.id, force=True)
+    check("parc: encerrada não posta mais", sent == 0)
+    calls = await say(BIA, "/start parcerias")
+    check("parc: tela do bot mãe sem 'chegando'", any("Parcerias automáticas" in m.text and "chegando" not in m.text
+                                                      for m in texts(calls)))
+
     # ---------- reinício e token revogado ----------
     await manager.stop_all()
     manager2 = BotManager(db, settings, child_dp, mother, session_factory=lambda: session, poll_timeout=1)

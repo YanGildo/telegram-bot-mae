@@ -139,9 +139,13 @@ async def child_admins(db: Database, child_id: int) -> list[ChildAdmin]:
         return list(await s.scalars(select(ChildAdmin).where(ChildAdmin.child_id == child_id).order_by(ChildAdmin.id)))
 
 
-async def child_chats(db: Database, child_id: int, only_present: bool = True) -> list[ChildChat]:
+async def child_chats(db: Database, child_id: int, only_present: bool = True,
+                      include_partner: bool = False) -> list[ChildChat]:
+    """Grupos e canais do bot. Os grupos de parceiros (onde o bot só divulga) ficam de fora."""
     async with db.session() as s:
         q = select(ChildChat).where(ChildChat.child_id == child_id)
+        if not include_partner:
+            q = q.where(ChildChat.partner_of.is_(None))
         if only_present:
             q = q.where(ChildChat.bot_status.in_(("administrator", "member", "creator")))
         return list(await s.scalars(q.order_by(ChildChat.type, ChildChat.title)))

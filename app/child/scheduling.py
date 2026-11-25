@@ -20,7 +20,8 @@ from ..db import (Acervo, AcervoItem, ChildBot, ChildChat, Database, PendingDele
 from .content import buttons_markup, load_media, random_text, send_post
 
 logger = logging.getLogger(__name__)
-_running: set[int] = set()  # programações sendo enviadas agora (evita dois envios ao mesmo tempo)
+_running: set[int] = set()
+MOTHER_USERNAME = ""  # preenchido ao ligar: link da marca d'água das parcerias  # programações sendo enviadas agora (evita dois envios ao mesmo tempo)
 
 WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 MIN_INTERVAL = 5  # minutos
@@ -280,7 +281,14 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
         return 0, "limite do dia atingido"
 
     round_note = ""
-    if sch.kind == "msg":
+    partnership = None
+    if sch.kind == "parc":
+        from .partners import enforce
+        partnership, why = await enforce(db, sch, now_local, force)
+        if why:
+            await _set_error(db, sch_id, why)
+            return 0, why
+    if sch.kind in ("msg", "parc"):
         text, media, markup, above = sch.text_html, load_media(sch.media), buttons_markup(sch.buttons), sch.caption_above
         variant, round_note = await pick_sched_item(db, sch_id)
         if variant is not None:  # vários conteúdos: usa o da vez (texto dele, ou o texto principal se vazio)
@@ -301,6 +309,14 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
             return 0, why
         text, media, markup, above = acervo_caption(acv, item), load_media(item.media), buttons_markup(acv.buttons), \
             acv.caption_above
+
+    if partnership is not None:  # regras do acordo + marca d'água obrigatória
+        from .partners import watermark
+        if not partnership.allow_media:
+            media = []
+        if not partnership.allow_buttons:
+            markup = None
+        text = "\n\n".join(x for x in ((text or "").strip(), watermark(MOTHER_USERNAME, sch.child_id)) if x)
 
     sent, errors = 0, []
     for d, c in dests:
