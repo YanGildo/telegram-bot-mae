@@ -1,4 +1,4 @@
-# Bot Mãe — versão 5 (Etapas 1 a 4)
+# Bot Mãe — versão 6
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -51,6 +51,13 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 
 **Programações**: ✏️ nome para cada uma; 📚 vários conteúdos numa mensagem repetida (cada envio usa um, em ordem ou sorteado), enviados ou encaminhados direto no bot, separados do acervo
 
+**🔨 Ban em todos os grupos** (veio do bot de clipes)
+- Você (ou um admin do bot, inclusive anônimo) bane alguém pelo Telegram num grupo → o bot bane pelo ID em todos os outros grupos/canais onde é admin (menos o canal de registros). Bans do Group Help e de outros admins não espalham; admins do bot nunca são banidos
+- `/banirtodos ID` no privado, ou respondendo à pessoa no grupo (o comando some); `/desbanirtodos ID`
+- Registro com ♻️ Desbanir de todos; grupo novo recebe os bans existentes; 📥 importar IDs (ex.: do /exportar do bot de clipes)
+
+**🧹 Anti-spam** (veio do bot de clipes): apaga mensagens de @ da lista (quem postou, repasses, texto/botões divulgando), na hora ou depois de 1, 5 ou 10 min
+
 **🚫 Palavras proibidas** (por grupo, sem limite de palavras)
 - Punição: desativado, advertência (1 a 5, depois silencia/kick/ban), kick, silenciar, ban; duração (1 h a 30 dias ou para sempre)
 - Apagar a mensagem ou não; busca "contém" ou "palavra exata"; ignora acentos e maiúsculas; frases também
@@ -84,7 +91,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "138/138 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "160/160 passaram" ou mais.
 
 ## Arquivos
 
@@ -106,6 +113,7 @@ app/
   child/words.py     palavras proibidas (e botões do canal de registros)
   child/joins.py     entrada por nome e bio, tela do canal de registros
   child/logs.py      envio para o canal de registros
+  child/moderation.py ban em todos os grupos e anti-spam
   child/content.py   montar e enviar posts (mídias e botões)
 servidor/            instalar.sh e atualizar.sh
 docs/PLANO.md        plano completo

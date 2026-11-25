@@ -260,8 +260,11 @@ async def punish(bot: Bot, chat_id: int, user_id: int, action: str, minutes: int
         await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
 
 
-@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))
+@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ~F.text.startswith("/banirtodos"))
 async def on_group_text(message: Message, bot: Bot, child: ChildBot, db: Database, settings) -> None:
+    from .moderation import check_spam
+    if await check_spam(message, bot, child, db):
+        return
     user = message.from_user
     text = message.text or message.caption or ""
     if text and user is not None and not user.is_bot:

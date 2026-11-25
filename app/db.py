@@ -52,6 +52,10 @@ class ChildBot(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")  # active, stopped, invalid
     last_error: Mapped[str | None] = mapped_column(String(300))
     log_chat_id: Mapped[int | None] = mapped_column(BigInteger)  # canal/grupo de registros
+    ban_network: Mapped[bool | None] = mapped_column(Boolean, default=True)  # ban em todos os grupos
+    spam_names: Mapped[str | None] = mapped_column(Text, default="")  # anti-spam: um @ por linha
+    spam_delay: Mapped[int | None] = mapped_column(Integer, default=60)  # segundos até apagar
+    spam_deleted: Mapped[int | None] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -251,6 +255,24 @@ class WordFilter(Base):
     warn_then: Mapped[str] = mapped_column(String(8), default="mute")  # mute | kick | ban
     match: Mapped[str] = mapped_column(String(8), default="contains")  # contains | exact
     words: Mapped[str] = mapped_column(Text, default="")  # uma por linha
+
+
+class ChildBan(Base):
+    """Quem foi banido em todos os grupos de um bot filho."""
+
+    __tablename__ = "child_bans"
+    __table_args__ = (UniqueConstraint("child_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    username: Mapped[str | None] = mapped_column(String(64))
+    source_title: Mapped[str] = mapped_column(String(256), default="")
+    actor: Mapped[str] = mapped_column(String(256), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class JoinFilter(Base):

@@ -15,7 +15,7 @@ from .. import repo
 from ..db import ChildAdmin, ChildBot, ChildChat, Database, utcnow
 from ..manager import BotManager
 from ..ui import CP, Screen, cbtn, kb, send, show, url
-from . import acervo, joins, schedules, words
+from . import acervo, joins, moderation, schedules, words
 from .flow import ChildFlow
 from .scheduling import get_acervo, run_schedule
 
@@ -90,6 +90,8 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
             "• 🔁 <b>Mensagens repetidas</b>: mensagens programadas, sem limite\n"
             "• 🚫 <b>Palavras proibidas</b>: censura no chat, com a punição que você escolher\n"
             "• 🚪 <b>Entrada</b>: aprova ou recusa pedidos de entrada pelo nome e pela bio\n"
+            "• 🔨 <b>Ban em todos</b>: baniu num grupo, o bot bane em todos os outros (também por /banirtodos ID)\n"
+            "• 🧹 <b>Anti-spam</b>: apaga mensagens de @ de listas de divulgação\n"
             "• 📋 <b>Registros</b>: canal onde o bot conta o que fez (com botões para desmutar e desbanir)\n"
             "• 👮 <b>Admins do bot</b>: quem mais pode usar este painel")
     if problems:
@@ -97,6 +99,7 @@ async def screen_home(child: ChildBot, db: Database) -> Screen:
     return text, kb([cbtn(f"👥 Grupos e canais ({len(chats)})", "chats")],
                     [cbtn("🗂 Acervo", "acv"), cbtn("🔁 Mensagens repetidas", "schs", "msg")],
                     [cbtn("🚫 Palavras proibidas", "words"), cbtn("🚪 Entrada", "joins")],
+                    [cbtn("🔨 Ban em todos", "ban"), cbtn("🧹 Anti-spam", "spam")],
                     [cbtn("📋 Registros", "logc"), cbtn("👮 Admins do bot", "admins")],
                     [cbtn("❓ Ajuda", "help")])
 
@@ -323,6 +326,8 @@ async def typed_input(message: Message, state: FSMContext, child: ChildBot, db: 
         result = await words.handle_input(kind, data, message, child, db)
     elif kind.startswith("join_"):
         result = await joins.handle_input(kind, data, message, child, db)
+    elif kind.startswith("mod_"):
+        result = await moderation.handle_input(kind, message, message.bot, child, db)
     else:
         await state.clear()
         return
@@ -502,6 +507,10 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
         await s.commit()
         await s.refresh(row)
         missing = missing_rights(row)
+    if new.status == "administrator" and old.status != "administrator":
+        n = await moderation.apply_bans_to_chat(bot, db, child, chat.id)  # grupo novo recebe os bans existentes
+        if n:
+            logger.info("@%s: apliquei %s ban(s) em %s", child.username, n, chat.id)
 
     kind = "canal" if chat.type == ChatType.CHANNEL else "grupo"
     if new.status in ("left", "kicked"):
@@ -515,4 +524,4 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
 
 
 # as telas de acervo, programações e palavras ficam em arquivos próprios (vêm depois dos comandos acima)
-router.include_routers(schedules.router, acervo.router, joins.router, words.router)
+router.include_routers(moderation.router, schedules.router, acervo.router, joins.router, words.router)

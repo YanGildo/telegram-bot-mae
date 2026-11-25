@@ -798,6 +798,91 @@ async def main():
         notes += sum(1 for m in texts(calls) if "Rodada completa" in m.text and "acervo" in m.text)
     check("v5: acervo aleatório avisa uma vez ao fechar a rodada", notes == 1)
 
+    # ================= v6: ban em todos + anti-spam no bot filho =================
+    from aiogram.methods import UnbanChatMember
+    from aiogram.types import ChatMemberBanned
+    from app.child.moderation import BA
+    G7 = Chat(id=-100606, type="supergroup", title="Grupo 7")
+    await joined(G7, OWNER, admin_member(BOTS["700000001"]))
+    session.take()
+
+    async def ban_in(chat, by, target):
+        ev = ChatMemberUpdated(chat=chat, from_user=by, date=NOW, old_chat_member=ChatMemberMember(user=target),
+                               new_chat_member=ChatMemberBanned(user=target, until_date=0))
+        return await feed(child_dp, cbot, chat_member=ev)
+
+    calls = await cclick(OWNER, CP(s="ban").pack())
+    check("v6: tela Ban em todos explica e mostra comandos", any("/banirtodos" in m.text and "Importar" in " ".join(buttons(m))
+                                                                 for m in texts(calls)))
+    VIL = User(id=4001, is_bot=False, first_name="Vilão")
+    calls = await ban_in(ANA_G, OWNER, VIL)
+    bans = {m.chat_id for _, m in calls if isinstance(m, BanChatMember) and m.user_id == 4001}
+    check("v6: ban do dono espalha (sem o canal de registros)", bans == {-100602, -100606})
+    check("v6: registro com Desbanir de todos", any(m.chat_id == -100605 and "Ban em todos" in m.text
+                                                    and "♻️ Desbanir de todos" in buttons(m) for m in texts(calls)))
+    calls = await ban_in(ANA_G, BIA, User(id=4002, is_bot=False, first_name="X"))
+    check("v6: ban de quem não é admin do bot não espalha", not any(isinstance(m, BanChatMember) for _, m in calls))
+    GH = User(id=999, is_bot=True, first_name="Group Help")
+    calls = await ban_in(ANA_G, GH, User(id=4003, is_bot=False, first_name="Y"))
+    check("v6: ban do Group Help não espalha", not any(isinstance(m, BanChatMember) for _, m in calls))
+    ANONU = User(id=1087968824, is_bot=True, first_name="Group")
+    calls = await ban_in(ANA_G, ANONU, User(id=4004, is_bot=False, first_name="Z"))
+    check("v6: ban de admin anônimo espalha", any(isinstance(m, BanChatMember) and m.user_id == 4004 for _, m in calls))
+    calls = await ban_in(ANA_G, OWNER, ANA)
+    check("v6: admin do bot nunca é banido em todos", not any(isinstance(m, BanChatMember) for _, m in calls))
+    calls = await csay(OWNER, "/banirtodos 4005")
+    check("v6: /banirtodos ID no privado", {m.chat_id for _, m in calls if isinstance(m, BanChatMember) and m.user_id == 4005}
+          == {-100602, -100604, -100606} and any(m.chat_id == 111 and "4005" in m.text for m in texts(calls)))
+    calls = await csay(BIA, "/banirtodos 4006")
+    check("v6: /banirtodos só para admins do bot", not any(isinstance(m, BanChatMember) for _, m in calls))
+    tgt = Message(message_id=nid(), date=NOW, chat=ANA_G, from_user=User(id=4007, is_bot=False, first_name="W"), text="oi")
+    cmd = Message(message_id=nid(), date=NOW, chat=ANA_G, from_user=OWNER, text="/banirtodos",
+                  entities=[MessageEntity(type="bot_command", offset=0, length=11)], reply_to_message=tgt)
+    calls = await feed(child_dp, cbot, message=cmd)
+    check("v6: respondendo no grupo: comando some e bane em todos",
+          any(isinstance(m, DeleteMessage) and m.chat_id == -100604 for _, m in calls)
+          and {-100602, -100604, -100606} <= {m.chat_id for _, m in calls if isinstance(m, BanChatMember) and m.user_id == 4007}
+          and not any(isinstance(m, SendMessage) and m.chat_id == -100604 for _, m in calls))
+    calls = await cclick(OWNER, BA(u=4001).pack())
+    check("v6: Desbanir de todos", {m.chat_id for _, m in calls if isinstance(m, UnbanChatMember) and m.user_id == 4001}
+          >= {-100602, -100604, -100606})
+    calls = await csay(OWNER, "/desbanirtodos 4005")
+    check("v6: /desbanirtodos", any(isinstance(m, UnbanChatMember) and m.user_id == 4005 for _, m in calls))
+    G8 = Chat(id=-100607, type="supergroup", title="Grupo 8")
+    calls = await joined(G8, OWNER, admin_member(BOTS["700000001"]))
+    check("v6: grupo novo recebe os bans ativos", {m.user_id for _, m in calls if isinstance(m, BanChatMember)
+                                                   and m.chat_id == -100607} >= {4004, 4007})
+    await cclick(OWNER, CP(s="ban", a="imp").pack())
+    calls = await csay(OWNER, "5001, 5002\n5003")
+    check("v6: importar IDs bane cada um", {m.user_id for _, m in calls if isinstance(m, BanChatMember)} >= {5001, 5002, 5003})
+    await cclick(OWNER, CP(s="ban", a="tog").pack())
+    calls = await ban_in(ANA_G, OWNER, User(id=4008, is_bot=False, first_name="Q"))
+    check("v6: desligado não espalha", not any(isinstance(m, BanChatMember) for _, m in calls))
+    await cclick(OWNER, CP(s="ban", a="tog").pack())
+
+    # anti-spam
+    await cclick(OWNER, CP(s="spam", a="add").pack())
+    calls = await csay(OWNER, "@ListaDivulga https://t.me/outrocanal")
+    check("v6: anti-spam adiciona @ e link", any("@listadivulga" in m.text and "@outrocanal" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="spam", a="delay", i=0).pack())
+    LISTA = User(id=4100, is_bot=False, first_name="Lista", username="ListaDivulga")
+    calls = await csay(LISTA, "Entre na lista", chat=ANA_G)
+    check("v6: apaga na hora mensagem do @ da lista", any(isinstance(m, DeleteMessage) and m.chat_id == -100604 for _, m in calls))
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=ANA_G, from_user=BIA,
+                       text="vem pro @outrocanal", entities=[MessageEntity(type="mention", offset=8, length=11)]))
+    check("v6: apaga mensagem que divulga o @", any(isinstance(m, DeleteMessage) for _, m in calls))
+    calls = await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=ANA_G, from_user=OWNER,
+                       text="vem pro @outrocanal", entities=[MessageEntity(type="mention", offset=8, length=11)]))
+    check("v6: admin do bot não tem mensagem apagada", not any(isinstance(m, DeleteMessage) for _, m in calls))
+    await cclick(OWNER, CP(s="spam", a="delay", i=60).pack())
+    calls = await csay(LISTA, "de novo", chat=ANA_G)
+    check("v6: com espera, não apaga na hora", not any(isinstance(m, DeleteMessage) for _, m in calls))
+    await sched.tick(manager, now=datetime(2030, 1, 1))
+    check("v6: apaga depois da espera", any(isinstance(m, DeleteMessages) and m.chat_id == -100604 for _, m in session.take()))
+    calls = await cclick(OWNER, CP(s="spam", a="del", i=0).pack())
+    calls = await csay(LISTA, "e agora", chat=ANA_G)
+    check("v6: tirou da lista, não apaga mais", not any(isinstance(m, (DeleteMessage,)) for _, m in calls))
+
     # ---------- reinício e token revogado ----------
     await manager.stop_all()
     manager2 = BotManager(db, settings, child_dp, mother, session_factory=lambda: session, poll_timeout=1)
