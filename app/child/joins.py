@@ -73,7 +73,7 @@ async def on_join_request(req: ChatJoinRequest, bot: Bot, child: ChildBot, db: D
         chat = await s.scalar(select(ChildChat).where(ChildChat.child_id == child.id, ChildChat.chat_id == req.chat.id))
         f = await s.scalar(select(JoinFilter).where(JoinFilter.child_id == child.id,
                                                     JoinFilter.chat_row_id == chat.id)) if chat else None
-    if f is None or not f.enabled:
+    if f is None or not f.enabled or (chat is not None and chat.f_join is False):
         return
     user = req.from_user
     verdict, why = decide(f, user.full_name or "", req.bio or "", user.username)

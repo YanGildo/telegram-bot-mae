@@ -919,6 +919,37 @@ async def main():
     calls = await cclick(OWNER, CP(s="msgv", i=sm.id).pack())
     check("v8: tirar variação", any("Copy 2" not in m.text and "<b>2.</b> Copy 3" in m.text for m in texts(calls)))
 
+    # ================= v10: funções por grupo, textos sorteados um por um =================
+    calls = await cclick(OWNER, CP(s="chat", i=grp_row.id).pack())
+    check("v10: detalhe do grupo mostra as funções ligadas", any("✅ 📣 Publicar" in buttons(m) and "✅ 🔨 Ban em todos" in buttons(m)
+                                                                  for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="chat", a="feat", i=grp_row.id, j=0).pack())
+    check("v10: desliga Publicar só nesse grupo", any("❌ 📣 Publicar" in buttons(m) for m in texts(calls)))
+    async with db.session() as s:
+        r = await s.get(Schedule, sm.id)
+        r.max_per_day, r.last_run_at = 0, None
+        await s.commit()
+    calls = await cclick(OWNER, CP(s="sch", a="now", i=sm.id).pack())
+    check("v10: com Publicar desligado nada sai no grupo", not any(getattr(m, "chat_id", None) == -100604 and
+                                                                  type(m).__name__ in ("SendPhoto", "SendMessage", "SendMediaGroup")
+                                                                  for _, m in calls))
+    calls = await cclick(OWNER, CP(s="sch", a="dst", i=sm.id).pack())
+    check("v10: destinos marcam 🚫 o grupo sem publicação", any("🚫" in " ".join(buttons(m)) for m in texts(calls)))
+    await cclick(OWNER, CP(s="chat", a="feat", i=grp_row.id, j=0).pack())
+    await cclick(OWNER, CP(s="chat", a="feat", i=grp_row.id, j=3).pack())  # ban em todos desligado aqui
+    calls = await csay(OWNER, "/banirtodos 6001")
+    check("v10: grupo com Ban em todos desligado fica de fora", not any(isinstance(m, BanChatMember) and m.chat_id == -100604
+                                                                      for _, m in calls)
+          and any(isinstance(m, BanChatMember) and m.user_id == 6001 for _, m in calls))
+    await cclick(OWNER, CP(s="chat", a="feat", i=grp_row.id, j=3).pack())
+    await cclick(OWNER, CP(s="acv", a="rnd").pack())
+    for t in ("Sorte A", "Sorte B"):
+        await cclick(OWNER, CP(s="acv", a="in", i=2).pack())
+        calls = await csay(OWNER, t)
+    check("v10: textos sorteados adicionados um por um", any("<b>2.</b> Sorte B" in m.text for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="acv", a="rndrm", i=0).pack())
+    check("v10: tirar texto sorteado", any("<b>1.</b> Sorte B" in m.text for m in texts(calls)))
+
     # ================= v7: parcerias =================
     from app.db import Partnership, PartnerChat, ScheduleDest, ChildAdmin
     from app.child import scheduling as sch_mod

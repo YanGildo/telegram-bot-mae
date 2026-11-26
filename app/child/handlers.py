@@ -152,6 +152,19 @@ async def screen_chats(child: ChildBot, db: Database) -> Screen:
     return "\n".join(lines), kb(*rows)
 
 
+FEATURES = [
+    ("f_post", "📣 Publicar", "acervo e mensagens repetidas postam aqui"),
+    ("f_words", "🚫 Palavras", "aplica as palavras proibidas"),
+    ("f_spam", "🧹 Anti-spam", "apaga mensagens dos @ da lista"),
+    ("f_ban", "🔨 Ban em todos", "bane aqui e espalha os bans daqui"),
+    ("f_join", "🚪 Entrada", "aprova/recusa pedidos de entrada"),
+]
+
+
+def feature_on(c: ChildChat | None, key: str) -> bool:
+    return c is None or getattr(c, key, True) is not False
+
+
 def screen_chat(c: ChildChat) -> Screen:
     kind = "Canal" if c.type == ChatType.CHANNEL else "Grupo"
     yes = lambda ok: "✅" if ok else "❌"  # noqa: E731
@@ -170,8 +183,17 @@ def screen_chat(c: ChildChat) -> Screen:
     miss = missing_rights(c)
     if miss:
         lines.append(f"\n⚠️ Para corrigir: no {kind.lower()} → Administradores → @bot → ligue: {', '.join(miss)}.")
+    lines.append("\n<b>Funções neste " + kind.lower() + "</b> (toque para ligar/desligar só aqui)")
+    for key, label, desc in FEATURES:
+        if c.type == ChatType.CHANNEL and key in ("f_words", "f_spam", "f_join_g"):
+            continue
+        lines.append(f"{'✅' if feature_on(c, key) else '❌'} {label} — {desc}")
     lines.append("\n• 🚪 Tirar o bot daqui: o bot sai deste " + kind.lower() + ".")
-    return "\n".join(lines), kb([cbtn("🔄 Verificar", "chat", "check", c.id)],
+    feats = [cbtn(f"{'✅' if feature_on(c, key) else '❌'} {label}", "chat", "feat", c.id,
+                  j=[k for k, _, _ in FEATURES].index(key))
+             for key, label, _ in FEATURES if not (c.type == ChatType.CHANNEL and key in ("f_words", "f_spam"))]
+    return "\n".join(lines), kb(feats[:2], feats[2:4], feats[4:],
+                                [cbtn("🔄 Verificar", "chat", "check", c.id)],
                                 [cbtn("🚪 Tirar o bot daqui", "chat", "leave", c.id)],
                                 [cbtn("« Grupos e canais", "chats")])
 
@@ -407,7 +429,15 @@ async def on_panel(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot:
         if c is None or c.child_id != child.id:
             await cb.answer("Não encontrado.", show_alert=True)
             return
-        if a == "check":
+        if a == "feat" and 0 <= callback_data.j < len(FEATURES):
+            key, label, _ = FEATURES[callback_data.j]
+            async with db.session() as s:
+                row = await s.get(ChildChat, i)
+                setattr(row, key, not feature_on(row, key))
+                on = getattr(row, key)
+                await s.commit()
+            await cb.answer(f"{label}: {'ligado' if on else 'desligado'} neste grupo.")
+        elif a == "check":
             try:
                 member = await bot.get_chat_member(c.chat_id, bot.id)
             except (TelegramBadRequest, TelegramForbiddenError):

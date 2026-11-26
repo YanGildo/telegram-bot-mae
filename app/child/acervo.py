@@ -180,11 +180,31 @@ async def screen_caption(child: ChildBot, db: Database) -> Screen:
             "• 👀 Ver prévia: o bot te manda aqui um post de exemplo.")
     modes = [cbtn(("✅ " if acv.caption_mode == k else "") + label, "acv", "capm", n) for n, (k, label) in enumerate(CAP_MODES)]
     return text, kb(modes[:2], modes[2:],
-                    [cbtn("📝 Texto fixo", "acv", "in", 1), cbtn("🎲 Textos sorteados", "acv", "in", 2)],
+                    [cbtn("📝 Texto fixo", "acv", "in", 1), cbtn(f"🎲 Textos sorteados ({n_random})", "acv", "rnd")],
                     [cbtn("📎 Texto universal", "acv", "in", 3), cbtn("🔠 Botões", "acv", "in", 4)],
                     [cbtn(("✅ " if acv.caption_above else "❌ ") + "🖼 Mídia abaixo do texto", "acv", "above")],
                     [cbtn("👀 Ver prévia", "acv", "prev")],
                     [cbtn("« Acervo", "acv")])
+
+
+def _random_list(acv: Acervo) -> list[str]:
+    import re as _re
+    return [t.strip() for t in _re.split(r"\n-{3,}\n", acv.random_texts or "") if t.strip()]
+
+
+async def screen_random(child: ChildBot, db: Database) -> Screen:
+    acv = await get_acervo(db, child.id)
+    texts_ = _random_list(acv)
+    import re as _re
+    lines = ["🎲 <b>Textos sorteados</b>\n",
+             "Com a legenda em <b>Sorteada</b>, cada post do acervo sai com um destes textos, sorteado.\n"
+             "• ➕ Adicionar texto: um texto por vez.\n• 🗑 n: tira o texto.\n"]
+    lines += [f"<b>{n}.</b> {escape(_re.sub(r'<[^>]+>', '', t)[:120])}" for n, t in enumerate(texts_, 1)] \
+        or ["<i>Nenhum texto ainda.</i>"]
+    rows = [[cbtn(f"🗑 {n}", "acv", "rndrm", k) for k, n in list(enumerate(range(1, len(texts_) + 1)))[x:x + 5]]
+            for x in range(0, len(texts_), 5)]
+    return "\n".join(lines)[:4000], kb([cbtn("➕ Adicionar texto", "acv", "in", 2, style="primary")], *rows,
+                                       [cbtn("« Legenda e botões", "acv", "cap")])
 
 
 async def screen_items(child: ChildBot, db: Database, page: int) -> Screen:
@@ -217,8 +237,8 @@ async def screen_items(child: ChildBot, db: Database, page: int) -> Screen:
 INPUTS = {
     1: ("acv_fixed", "📝 <b>Texto fixo</b>\n\nEnvie o texto que vai em todo post (pode usar negrito, link, emoji premium).\n"
                      "Envie <code>-</code> para apagar."),
-    2: ("acv_random", "🎲 <b>Textos sorteados</b>\n\nEnvie os textos separados por uma linha só com <code>---</code>. "
-                      "Exemplo:\n<code>Texto 1\n---\nTexto 2\n---\nTexto 3</code>\n\nEnvie <code>-</code> para apagar."),
+    2: ("acv_random", "🎲 <b>Novo texto sorteado</b>\n\nMande <b>um</b> texto. Ele entra na lista do sorteio "
+                      "(para adicionar outro, toque em ➕ de novo)."),
     3: ("acv_footer", "📎 <b>Texto universal</b>\n\nVai no fim de todo post, depois da legenda "
                       "(ex.: chamada para o seu canal). Envie <code>-</code> para apagar."),
     4: ("acv_buttons", "🔠 <b>Botões de link</b>\n\nUm botão por linha, no formato <code>Texto - link</code>. "
@@ -244,7 +264,11 @@ async def handle_input(kind: str, message: Message, child: ChildBot, db: Databas
         elif kind == "acv_fixed":
             acv.fixed_text = value
         elif kind == "acv_random":
-            acv.random_texts = value
+            if not value:
+                return "Mande o texto (ou /cancelar)."
+            acv.random_texts = "\n---\n".join(_random_list(acv) + [value])
+            await s.commit()
+            return await screen_random(child, db)
         elif kind == "acv_footer":
             acv.footer_text = value
         await s.commit()
@@ -323,6 +347,14 @@ async def on_acervo(cb: CallbackQuery, callback_data: CP, state: FSMContext, bot
             await save(caption_above=not acv.caption_above)
         await cb.answer()
         return await show(cb, await screen_caption(child, db))
+    if a in ("rnd", "rndrm"):
+        if a == "rndrm":
+            texts_ = _random_list(acv)
+            if 0 <= i < len(texts_):
+                texts_.pop(i)
+                await save(random_texts="\n---\n".join(texts_))
+        await cb.answer()
+        return await show(cb, await screen_random(child, db))
     if a == "in" and i in INPUTS:
         kind, prompt = INPUTS[i]
         return await ask(cb, state, kind, prompt, cbtn("❌ Cancelar", "acv", "cap"))

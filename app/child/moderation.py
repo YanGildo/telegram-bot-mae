@@ -55,7 +55,8 @@ async def _fresh(db: Database, child_id: int) -> ChildBot:
 async def network(db: Database, child: ChildBot) -> list[ChildChat]:
     row = await _fresh(db, child.id)
     return [c for c in await repo.child_chats(db, child.id)
-            if c.bot_status in ("administrator", "creator") and c.chat_id != row.log_chat_id]
+            if c.bot_status in ("administrator", "creator") and c.chat_id != row.log_chat_id
+            and c.f_ban is not False]  # 🔨 Ban em todos desligado neste grupo
 
 
 async def _call(fn):
@@ -281,6 +282,9 @@ async def check_spam(message: Message, bot: Bot, child: ChildBot, db: Database) 
         if await s.scalar(select(ChildChat.id).where(ChildChat.child_id == child.id, ChildChat.chat_id == message.chat.id,
                                                      ChildChat.partner_of.is_not(None))):
             return False  # grupo de parceiro: quem modera é o dono dele
+        if await s.scalar(select(ChildChat.id).where(ChildChat.child_id == child.id, ChildChat.chat_id == message.chat.id,
+                                                     ChildChat.f_spam.is_(False))):
+            return False  # 🧹 Anti-spam desligado neste grupo
     hit = (_senders(message) | _mentions(message)) & blocked
     if not hit or (message.from_user and await repo.is_child_admin(db, child, message.from_user.id)):
         return False

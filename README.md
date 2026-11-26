@@ -1,4 +1,4 @@
-# Bot Mãe — versão 9
+# Bot Mãe — versão 10
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -16,6 +16,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 
 **Bot filho** (o dono manda /start no próprio bot)
 - Painel com orientação em cada tela
+- Funções por grupo (👥 Grupos e canais → o grupo): ligar/desligar só ali 📣 Publicar, 🚫 Palavras, 🧹 Anti-spam, 🔨 Ban em todos e 🚪 Entrada (tudo ligado por padrão)
 - 👥 Grupos e canais: botões de adicionar que já abrem com as permissões certas, lista com ✅ / ⚠️ / ❌, verificar permissões, detalhe de cada grupo e "tirar o bot daqui"
 - Só o dono e os admins do bot podem colocar o bot em grupos; se outra pessoa tentar, ele sai na hora e avisa
 - 👮 Admins do bot: o dono adiciona ou tira pessoas pelo ID
@@ -26,7 +27,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 - Canal de origem: tudo que você posta lá (foto, vídeo ou álbum) entra sozinho no acervo; editar a legenda no canal atualiza no acervo
 - Limite (25, 50, 100, 200, 500 ou sem limite): **rotativo** (a nova entra e a mais antiga sai) ou **travado** (avisa que lotou)
 - Ordem **aleatória** (nunca repete a última e só repete depois de usar todas) ou **sequencial** (recomeça ou para no fim)
-- Legenda: original, fixa, sorteada de uma lista ou nenhuma + texto universal no fim + botões de link + mídia abaixo do texto; 👀 prévia
+- Legenda: original, fixa, sorteada (textos adicionados um por um) ou nenhuma + texto universal no fim + botões de link + mídia abaixo do texto; 👀 prévia
 - 🗂 Ver mídias (tira da fila sem apagar do canal) · 🧹 Zerar (só contam as novas) · ♻️ Restaurar · ⏸ Pausar
 - ⏱ Programações do acervo: quantas quiser, cada uma com destinos e ritmo próprios
 - 📚 Álbuns **inteiros** (o álbum sai junto) ou **soltos** (cada foto/vídeo vira um post, com a legenda do álbum)
@@ -101,7 +102,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "192/192 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "199/199 passaram" ou mais.
 
 ## Arquivos
 

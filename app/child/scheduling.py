@@ -292,6 +292,7 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
         rows = list((await s.execute(select(ScheduleDest, ChildChat).join(
             ChildChat, ChildChat.id == ScheduleDest.chat_row_id).where(ScheduleDest.schedule_id == sch_id))).all())
     dests = [(d, c) for d, c in rows if c.bot_status in ("administrator", "creator", "member")
+             and c.f_post is not False  # 📣 Publicar desligado neste grupo
              and (only_chat_row is None or c.id == only_chat_row)]
     if not dests:
         await _set_error(db, sch_id, "nenhum destino escolhido (ou o bot saiu dos destinos)")

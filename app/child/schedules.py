@@ -224,8 +224,11 @@ async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
         text += ("\n\n⚠️ Marcado com 🔁: outra programação ativa também publica ali. Se não quer posts "
                  "em dobro, tire de uma delas.")
     rows = [[cbtn(("✅ " if c.id in chosen else "▫️ ") + ("🔁 " if c.id in others and c.id in chosen else "")
-                  + ("📢 " if c.type == ChatType.CHANNEL else "👥 ")
+                  + ("🚫 " if c.f_post is False else "") + ("📢 " if c.type == ChatType.CHANNEL else "👥 ")
                   + (c.title or str(c.chat_id))[:40], "sch", "dsttog", sch.id, j=c.id)] for c in chats]
+    if any(c.f_post is False for c in chats):
+        text += ("\n\n🚫 = 📣 Publicar está desligado nesse grupo (em 👥 Grupos e canais → o grupo): "
+                 "mesmo marcado, nada é postado lá.")
     if not chats:
         text += "\n\n<i>Nenhum grupo ou canal ainda. Use 👥 Grupos e canais no painel.</i>"
     return text, kb(*rows, [cbtn("« Voltar", "sch", "", sch.id)])

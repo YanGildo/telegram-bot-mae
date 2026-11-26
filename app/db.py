@@ -92,6 +92,12 @@ class ChildChat(Base):
     can_pin: Mapped[bool] = mapped_column(Boolean, default=False)
     added_by: Mapped[int | None] = mapped_column(BigInteger)
     partner_of: Mapped[int | None] = mapped_column(Integer)  # grupo do PARCEIRO (id da parceria): não é seu
+    # funções ligadas neste grupo (vazio = ligado)
+    f_post: Mapped[bool | None] = mapped_column(Boolean, default=True)  # publicar (acervo, mensagens repetidas)
+    f_words: Mapped[bool | None] = mapped_column(Boolean, default=True)
+    f_spam: Mapped[bool | None] = mapped_column(Boolean, default=True)
+    f_ban: Mapped[bool | None] = mapped_column(Boolean, default=True)
+    f_join: Mapped[bool | None] = mapped_column(Boolean, default=True)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

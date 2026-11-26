@@ -280,7 +280,7 @@ async def on_group_text(message: Message, bot: Bot, child: ChildBot, db: Databas
                                                           ChildChat.chat_id == message.chat.id))
             f = await s.scalar(select(WordFilter).where(WordFilter.child_id == child.id,
                                                         WordFilter.chat_row_id == chat.id)) if chat else None
-        if f is not None and f.action != "off":
+        if f is not None and f.action != "off" and chat is not None and chat.f_words is not False:
             word = find_banned(text, f)
             if word and not await _is_exempt(bot, db, child, message.chat.id, user.id):
                 await _apply(bot, db, child, message, f, word)
