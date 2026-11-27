@@ -205,6 +205,9 @@ class Schedule(Base):
     content_last: Mapped[int | None] = mapped_column(Integer)
     text_variants: Mapped[str | None] = mapped_column(Text, default="[]")  # JSON: outras versões do texto
     text_cursor: Mapped[int | None] = mapped_column(Integer, default=0)
+    link_preview: Mapped[bool | None] = mapped_column(Boolean, default=True)  # prévia do link no texto
+    links: Mapped[str | None] = mapped_column(Text, default="[]")  # JSON: links em rodízio (um por envio)
+    links_cursor: Mapped[int | None] = mapped_column(Integer, default=0)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_error: Mapped[str | None] = mapped_column(String(300))

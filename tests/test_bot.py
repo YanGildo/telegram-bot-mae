@@ -924,6 +924,34 @@ async def main():
     calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
     check("v11: tela indica que as mídias vêm do 📚", any("em rodízio" in m.text for m in texts(calls)))
 
+    # ================= v13: prévia por conteúdo, prévia do link, links em rodízio =================
+    calls = await cclick(OWNER, CP(s="msgi", a="see", i=sm.id, j=it1.id).pack())
+    check("v13: 👀 mostra um conteúdo específico", any(isinstance(m, SendPhoto) and m.chat_id == 111
+                                                     and m.caption == "Texto fixo do 1" for _, m in calls))
+    await cclick(OWNER, CP(s="msgi", a="clr", i=sm.id).pack())
+    await cclick(OWNER, CP(s="msgc", a="clrmedia", i=sm.id).pack())
+    await cclick(OWNER, CP(s="msgl", a="add", i=sm.id).pack())
+    calls = await csay(OWNER, "Grupo A: t.me/grupoa\nhttps://t.me/grupob")
+    check("v13: adiciona vários links de uma vez", any("<b>2.</b>" in m.text and "Links em rodízio" in m.text for m in texts(calls)))
+    calls = await cclick(OWNER, CP(s="msgl", a="prev", i=sm.id).pack())
+    check("v13: desliga a prévia do link", any("❌ 🌐 Prévia do link" in buttons(m) for m in texts(calls)))
+    async with db.session() as s:
+        r = await s.get(Schedule, sm.id)
+        r.max_per_day, r.last_run_at, r.text_cursor = 0, None, 0
+        await s.commit()
+    sent = []
+    for _ in range(3):
+        calls = await cclick(OWNER, CP(s="sch", a="now", i=sm.id).pack())
+        sent += [m for _, m in calls if isinstance(m, SendMessage) and m.chat_id == -100604]
+    check("v13: um link por envio, em ordem", len(sent) == 3 and "grupoa" in sent[0].text and "grupob" in sent[1].text
+          and "grupoa" in sent[2].text)
+    check("v13: sem prévia quando desligada", all(m.link_preview_options and m.link_preview_options.is_disabled for m in sent))
+    await cclick(OWNER, CP(s="msgl", a="prev", i=sm.id).pack())
+    calls = await cclick(OWNER, CP(s="sch", a="now", i=sm.id).pack())
+    lp = [m.link_preview_options for _, m in calls if isinstance(m, SendMessage) and m.chat_id == -100604]
+    check("v13: com prévia, mostra a do link da vez", lp and lp[0] and "grupob" in (lp[0].url or ""))
+    await cclick(OWNER, CP(s="msgl", a="clr", i=sm.id).pack())
+
     # ================= v10: funções por grupo, textos sorteados um por um =================
     calls = await cclick(OWNER, CP(s="chat", i=grp_row.id).pack())
     check("v10: detalhe do grupo mostra as funções ligadas", any("✅ 📣 Publicar" in buttons(m) and "✅ 🔨 Ban em todos" in buttons(m)

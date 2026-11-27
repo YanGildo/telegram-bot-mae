@@ -280,6 +280,58 @@ async def on_variants(cb: CallbackQuery, callback_data: CP, state: FSMContext, c
     await show(cb, await screen_variants(db, await _get(db, child, i)))
 
 
+def screen_links(sch: Schedule) -> Screen:
+    from .scheduling import link_list
+    links = link_list(sch)
+    nxt = (sch.links_cursor or 0) % len(links) if links else 0
+    lines = ["🔗 <b>Links em rodízio</b>\n",
+             "Cada envio desta mensagem coloca <b>um</b> link no fim, em ordem (1, 2, 3, 1…). "
+             "Se a mensagem não tiver texto nem mídia, sai só o link. "
+             "Para divulgar seus grupos, crie uma mensagem repetida só com links e escolha o intervalo dela.\n",
+             f"🌐 Prévia do link: {'✅ aparece' if sch.link_preview is not False else '❌ escondida'}\n"]
+    for n, ln in enumerate(links[:40], 1):
+        lines.append(("▶️ " if n - 1 == nxt else "") + f"<b>{n}.</b> {escape(strip_tags(ln)[:80])}")
+    if not links:
+        lines.append("<i>Nenhum link ainda.</i>")
+    lines.append("\n• ➕ Adicionar: mande um ou vários, um por linha (pode ter texto, ex.: "
+                 "<code>Grupo de games: t.me/meugrupo</code>).\n• ▶️ marca o próximo a sair.")
+    rows = [[cbtn("➕ Adicionar links", "msgl", "add", sch.id, style="primary")],
+            [cbtn(("✅" if sch.link_preview is not False else "❌") + " 🌐 Prévia do link", "msgl", "prev", sch.id)]]
+    rows += [[cbtn(f"🗑 {k + 1}", "msgl", "rm", sch.id, j=k) for k in range(x, min(x + 5, len(links)))]
+             for x in range(0, min(len(links), 40), 5)]
+    if links:
+        rows.append([cbtn("🧹 Apagar todos", "msgl", "clr", sch.id)])
+    return "\n".join(lines)[:4000], kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
+
+
+@router.callback_query(CP.filter(F.s == "msgl"))
+async def on_links(cb: CallbackQuery, callback_data: CP, state: FSMContext, child: ChildBot, db: Database) -> None:
+    if not await repo.is_child_admin(db, child, cb.from_user.id):
+        await cb.answer("Só o dono e os admins do bot usam este painel.", show_alert=True)
+        return
+    from .scheduling import link_list
+    a, i, j = callback_data.a, callback_data.i, callback_data.j
+    sch = await _get(db, child, i)
+    if sch is None:
+        await cb.answer("Não encontrada.", show_alert=True)
+        return
+    await state.clear()
+    if a == "add":
+        return await ask(cb, state, "msg_links", "🔗 <b>Adicionar links</b>\n\nMande um ou vários, um por linha.",
+                         cbtn("❌ Cancelar", "msgl", "", i), sch_id=i)
+    if a == "prev":
+        await _update(db, i, link_preview=sch.link_preview is False)
+    elif a == "rm":
+        links = link_list(sch)
+        if 0 <= j < len(links):
+            links.pop(j)
+            await _update(db, i, links=json.dumps(links))
+    elif a == "clr":
+        await _update(db, i, links="[]", links_cursor=0)
+    await cb.answer()
+    await show(cb, screen_links(await _get(db, child, i)))
+
+
 async def _items(db: Database, sch_id: int) -> list[ScheduleItem]:
     async with db.session() as s:
         return list(await s.scalars(select(ScheduleItem).where(ScheduleItem.schedule_id == sch_id)
@@ -291,25 +343,32 @@ async def screen_content(db: Database, sch: Schedule) -> Screen:
     rows_btn, _ = parse_buttons(sch.buttons)
     n_items = len(await _items(db, sch.id))
     n_var = len(_variants(sch))
+    from .scheduling import link_list
+    n_links = len(link_list(sch))
     text = ("✍️ <b>Personalizar mensagem</b>\n\n"
             f"📄 Texto {'✅' if sch.text_html else '❌'}" + (f" + {n_var} variação(ões)" if n_var else "") + "\n"
             + (f"📸 Mídias: {n_items} em rodízio\n" if n_items else
                f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n")
             + 
+            f"🔗 Links em rodízio: {n_links or '❌'}\n"
             f"🔠 Botões de link {'✅' if rows_btn else '❌'}\n"
+            f"🌐 Prévia do link {'✅ aparece' if sch.link_preview is not False else '❌ escondida'}\n"
             f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n"
             "\n"
             "👉 Use os botões abaixo para definir cada parte. 👀 Veja mostra só aquela parte; "
             "👀 Visualização completa manda a mensagem inteira aqui, do jeito que vai sair.\n\n"
             "📄 <b>Texto</b>: o texto principal e as variações da copy. Cada envio usa a próxima (1, 2, 3, 1…).\n"
             "📸 <b>Mídias</b>: várias mídias (com ou sem texto próprio) e a programação usa uma por vez.\n"
+            "🔗 <b>Links</b>: cada envio coloca o próximo link no fim da mensagem (bom para divulgar seus grupos).\n"
             "Conteúdo <b>com texto próprio</b> (ex.: vídeo de prova social) sai sempre com o texto dele; "
             "conteúdo <b>sem texto</b> sai com a próxima variação.")
     i = sch.id
     return text, kb([cbtn(f"📄 Texto ({n_var + (1 if sch.text_html else 0)})", "msgv", "", i),
                      cbtn("👀 Veja", "msgc", "vt", i)],
                     [cbtn(f"📸 Mídias ({n_items or len(media)})", "msgi", "", i), cbtn("👀 Veja", "msgc", "vm", i)],
+                    [cbtn(f"🔗 Links ({n_links})", "msgl", "", i), cbtn("👀 Veja", "msgc", "vl", i)],
                     [cbtn("🔠 Botões de URL", "msgc", "btn", i), cbtn("👀 Veja", "msgc", "vb", i)],
+                    [cbtn(("✅" if sch.link_preview is not False else "❌") + " 🌐 Prévia do link", "msgc", "lprev", i)],
                     [cbtn(("✅ " if sch.caption_above else "❌ ") + "🖼 Mídia abaixo do texto", "msgc", "above", i)],
                     [cbtn("👀 Visualização completa", "msgc", "full", i)],
                     [cbtn("« Voltar", "sch", "", i)])
@@ -353,11 +412,12 @@ async def screen_items(db: Database, sch: Schedule) -> Screen:
             [cbtn(("✅ " if (sch.content_order or "seq") == "seq" else "") + "🔢 Em ordem", "msgi", "ord", sch.id, j=0),
              cbtn(("✅ " if sch.content_order == "random" else "") + "🎲 Sorteado", "msgi", "ord", sch.id, j=1)]]
     pairs = list(enumerate(items[:30], 1))
-    rows += [[b for n, it in pairs[k:k + 3] for b in (cbtn(f"✏️ {n}", "msgi", "txt", sch.id, j=it.id),
+    rows += [[b for n, it in pairs[k:k + 2] for b in (cbtn(f"👀 {n}", "msgi", "see", sch.id, j=it.id),
+                                                      cbtn(f"✏️ {n}", "msgi", "txt", sch.id, j=it.id),
                                                       cbtn(f"🗑 {n}", "msgi", "rm", sch.id, j=it.id))]
-             for k in range(0, len(pairs), 3)]
+             for k in range(0, len(pairs), 2)]
     if items:
-        lines.append("\n✏️ n: dá (ou tira) um texto próprio para aquele conteúdo.")
+        lines.append("\n👀 n: mostra aquele conteúdo aqui. ✏️ n: dá (ou tira) um texto próprio para ele.")
     if items:
         rows.append([cbtn("🧹 Apagar todos", "msgi", "clr", sch.id)])
     return "\n".join(lines), kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
@@ -385,6 +445,24 @@ async def on_items(cb: CallbackQuery, callback_data: CP, state: FSMContext, chil
         return await ask(cb, state, "item_text", "✏️ <b>Texto próprio deste conteúdo</b>\n\nMande o texto que deve "
                          "sair sempre com ele (ex.: a copy da prova social). Envie <code>-</code> para tirar e ele "
                          "passar a usar as variações.", cbtn("❌ Cancelar", "msgi", "", i), sch_id=i, item_id=j)
+    if a == "see":
+        async with db.session() as s:
+            it = await s.get(ScheduleItem, j)
+        if it is None or it.schedule_id != i:
+            await cb.answer("Não encontrado.", show_alert=True)
+            return
+        from .scheduling import text_pool
+        pool = text_pool(sch)
+        text = it.text_html or (pool[(sch.text_cursor or 0) % len(pool)] if pool else "")
+        try:
+            await send_post(cb.bot, cb.from_user.id, text, load_media(it.media), None, sch.caption_above,
+                            sch.link_preview is not False)
+            await cb.answer("Enviei aqui embaixo.")
+        except ValueError:
+            await cb.answer("Esse conteúdo está vazio.", show_alert=True)
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            await cb.answer(f"Não consegui mostrar: {e.message}", show_alert=True)
+        return
     if a == "ord":
         await _update(db, i, content_order="seq" if j == 0 else "random")
     elif a == "rm":
@@ -496,6 +574,19 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         if a == "clrmedia":
             await _update(db, i, media="[]")
             await cb.answer("Mídias removidas.")
+        elif a == "lprev":
+            await _update(db, i, link_preview=sch.link_preview is False)
+            await cb.answer("Prévia do link " + ("ligada." if sch.link_preview is False else "desligada."))
+        elif a == "vl":
+            from .scheduling import first_url, link_list
+            links = link_list(sch)
+            if not links:
+                await cb.answer("Nenhum link ainda.", show_alert=True)
+                return
+            nxt = links[(sch.links_cursor or 0) % len(links)]
+            await send_post(bot, cb.from_user.id, nxt, [], None, False, sch.link_preview is not False, first_url(nxt))
+            await cb.answer(f"Enviei o próximo dos {len(links)} links.")
+            return
         elif a == "above":
             await _update(db, i, caption_above=not sch.caption_above)
             await cb.answer()
@@ -518,8 +609,16 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
             markup = buttons_markup(sch.buttons) if a in ("vb", "full") else None
             if a == "vb" and markup is not None:
                 text = "🔠 Botões:"
+            purl = None
+            if a == "full":
+                from .scheduling import first_url, join_link, link_list
+                links = link_list(sch)
+                if links:
+                    nxt_link = links[(sch.links_cursor or 0) % len(links)]
+                    text, purl = join_link(text, nxt_link), first_url(nxt_link)
             try:
-                await send_post(bot, cb.from_user.id, text, media, markup, sch.caption_above)
+                await send_post(bot, cb.from_user.id, text, media, markup, sch.caption_above,
+                                sch.link_preview is not False, purl)
                 await cb.answer(f"Enviei aqui embaixo: o próximo dos {len(items)} conteúdos." if items and a != "vb"
                                 else "Enviei aqui embaixo.")
             except ValueError:
@@ -666,13 +765,22 @@ async def handle_input(kind: str, data: dict, message: Message, child: ChildBot,
     raw = (message.text or "").strip()
     tz = settings.tz
     if kind == "msg_text":
-        await _update(db, sch.id, text_html="" if raw == "-" else (message.html_text or ""))
+        lpo = message.link_preview_options
+        extra = {"link_preview": False} if lpo is not None and lpo.is_disabled else {}
+        await _update(db, sch.id, text_html="" if raw == "-" else (message.html_text or ""), **extra)
         return await screen_content(db, await _get(db, child, sch.id))
     if kind == "msg_var":
         if not raw:
             return "Mande o texto da variação ou /cancelar."
         await _update(db, sch.id, text_variants=json.dumps(_variants(sch) + [message.html_text]))
         return await screen_variants(db, await _get(db, child, sch.id))
+    if kind == "msg_links":
+        from .scheduling import link_list
+        new = [ln.strip() for ln in (message.html_text or "").split("\n") if ln.strip()]
+        if not new:
+            return "Mande os links (um por linha) ou /cancelar."
+        await _update(db, sch.id, links=json.dumps(link_list(sch) + new))
+        return screen_links(await _get(db, child, sch.id))
     if kind == "item_text":
         async with db.session() as s:
             it = await s.get(ScheduleItem, data.get("item_id", 0))

@@ -122,23 +122,26 @@ def random_text(raw: str) -> str:
 # ---------- enviar ----------
 
 async def send_post(bot: Bot, chat_id: int, text_html: str, media: list[dict],
-                    markup: InlineKeyboardMarkup | None, caption_above: bool = False) -> list[int]:
-    """Envia o post e devolve os ids das mensagens. Se o Telegram recusar o emoji premium, manda o comum."""
+                    markup: InlineKeyboardMarkup | None, caption_above: bool = False,
+                    preview: bool = True, preview_url: str | None = None) -> list[int]:
+    """Envia o post e devolve os ids das mensagens. Se o Telegram recusar o emoji premium, manda o comum.
+    preview=False tira a prévia do link; preview_url escolhe qual link vira prévia."""
+    lp = {"is_disabled": True} if not preview else ({"url": preview_url} if preview_url else None)
     try:
-        return await _send(bot, chat_id, text_html, media, markup, caption_above)
+        return await _send(bot, chat_id, text_html, media, markup, caption_above, lp)
     except TelegramBadRequest:
         plain = strip_custom_emoji(text_html)
         if plain == text_html:
             raise
-        return await _send(bot, chat_id, plain, media, markup, caption_above)
+        return await _send(bot, chat_id, plain, media, markup, caption_above, lp)
 
 
-async def _send(bot: Bot, chat_id: int, text: str, media: list[dict], markup, above: bool) -> list[int]:
+async def _send(bot: Bot, chat_id: int, text: str, media: list[dict], markup, above: bool, lp=None) -> list[int]:
     text = text or ""
     if not media:
         if not text.strip():
             raise ValueError("post vazio")
-        m = await bot.send_message(chat_id, text, reply_markup=markup)
+        m = await bot.send_message(chat_id, text, reply_markup=markup, link_preview_options=lp)
         return [m.message_id]
     long_text = plain_len(text) > 1024  # legenda grande demais: mídia primeiro, texto depois
     caption = None if long_text or not text.strip() else text
@@ -171,13 +174,13 @@ async def _send(bot: Bot, chat_id: int, text: str, media: list[dict], markup, ab
                 items.append(InputMediaPhoto(media=m["f"], **kw) if m["t"] == "photo" else InputMediaVideo(media=m["f"], **kw))
             if len(items) == 1:  # sobrou um só: manda sozinho
                 single = group[0]
-                one = await _send(bot, chat_id, items[0].caption or "", [single], None, above)
+                one = await _send(bot, chat_id, items[0].caption or "", [single], None, above, lp)
                 ids += one
             else:
                 msgs = await bot.send_media_group(chat_id, items)
                 ids += [x.message_id for x in msgs]
     if long_text:
-        m = await bot.send_message(chat_id, text, reply_markup=markup)
+        m = await bot.send_message(chat_id, text, reply_markup=markup, link_preview_options=lp)
         ids.append(m.message_id)
     elif len(media) > 1 and markup is not None:
         m = await bot.send_message(chat_id, BUTTONS_ONLY_TEXT, reply_markup=markup)  # álbum não aceita botões

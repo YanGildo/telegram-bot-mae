@@ -5,6 +5,7 @@ N mensagens no grupo), dias da semana, janela de horário, período e máximo po
 O próximo envio é gravado ANTES de postar: se o bot cair no meio, não repete o post.
 """
 
+import re
 import asyncio
 import json
 import logging
@@ -244,6 +245,41 @@ async def pick_text(db: Database, sch_id: int) -> str:
         return pool[n]
 
 
+URL_RE = re.compile(r"(?:https?://|t\.me/|www\.)\S+", re.I)
+
+
+def link_list(sch: Schedule) -> list[str]:
+    try:
+        return [t for t in json.loads(sch.links or "[]") if isinstance(t, str) and t.strip()]
+    except ValueError:
+        return []
+
+
+def first_url(html: str) -> str | None:
+    m = re.search(r'href="([^"]+)"', html or "") or URL_RE.search(re.sub(r"<[^>]+>", "", html or ""))
+    if not m:
+        return None
+    u = m.group(1) if m.re.groups else m.group(0)
+    return u if u.lower().startswith("http") else "https://" + u
+
+
+def join_link(text: str, link: str) -> str:
+    return "\n\n".join(x for x in ((text or "").strip(), link.strip()) if x)
+
+
+async def pick_link(db: Database, sch_id: int) -> str:
+    """Links em rodízio: um por envio, em ordem."""
+    async with db.session() as s:
+        sch = await s.get(Schedule, sch_id)
+        links = link_list(sch)
+        if not links:
+            return ""
+        n = (sch.links_cursor or 0) % len(links)
+        sch.links_cursor = n + 1
+        await s.commit()
+        return links[n]
+
+
 async def pick_sched_item(db: Database, sch_id: int) -> tuple[ScheduleItem | None, str]:
     """Vários conteúdos de uma mensagem repetida: escolhe o próximo (em ordem ou sorteado)."""
     async with db.session() as s:
@@ -320,6 +356,11 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
             text = await pick_text(db, sch_id)  # senão reveza entre o texto principal e as variações
         if variant is not None:
             media = load_media(variant.media)
+        link = await pick_link(db, sch_id)
+        if link:
+            text = join_link(text, link)
+        preview = sch.link_preview is not False
+        preview_url = first_url(link) if link else None
         if not text.strip() and not media:
             await _set_error(db, sch_id, "mensagem vazia: use ✍️ Personalizar mensagem")
             return 0, "mensagem vazia"
@@ -334,6 +375,7 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
                 await _notify(bot, db, sch.child_id, f"⏹ <b>Acervo parado</b>\n\n{why}. "
                                                      "Poste mídias novas, zere ou mude para recomeçar.")
             return 0, why
+        preview, preview_url = True, None
         text, media, markup, above = acervo_caption(acv, item), load_media(item.media), buttons_markup(acv.buttons), \
             acv.caption_above
 
@@ -349,10 +391,10 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
     for d, c in dests:
         try:
             try:
-                ids = await send_post(bot, c.chat_id, text, media, markup, above)
+                ids = await send_post(bot, c.chat_id, text, media, markup, above, preview, preview_url)
             except TelegramRetryAfter as e:
                 await asyncio.sleep(e.retry_after + 1)
-                ids = await send_post(bot, c.chat_id, text, media, markup, above)
+                ids = await send_post(bot, c.chat_id, text, media, markup, above, preview, preview_url)
         except (TelegramBadRequest, TelegramForbiddenError, ValueError) as e:
             errors.append(f"{c.title}: {getattr(e, 'message', str(e))}")
             continue
