@@ -238,6 +238,7 @@ class ScheduleDest(Base):
     chat_row_id: Mapped[int] = mapped_column(ForeignKey("child_chats.id", ondelete="CASCADE"))
     msg_counter: Mapped[int] = mapped_column(Integer, default=0)
     last_message_ids: Mapped[str] = mapped_column(String(200), default="")
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class PendingDelete(Base):
@@ -289,6 +290,14 @@ class Partnership(Base):
     end_date: Mapped[str | None] = mapped_column(String(10))
     paused_by: Mapped[int | None] = mapped_column(Integer)  # child_id de quem pausou
     ended_by: Mapped[int | None] = mapped_column(Integer)
+    # v13: uma "parceria" (modelo com convite reaproveitável) tem vários parceiros dentro
+    offer_id: Mapped[int | None] = mapped_column(Integer, index=True)  # parceiro → o modelo de onde veio
+    name: Mapped[str | None] = mapped_column(String(60))
+    max_chars: Mapped[int | None] = mapped_column(Integer, default=0)  # 0 = sem limite
+    max_lines: Mapped[int | None] = mapped_column(Integer, default=0)
+    req_open: Mapped[bool | None] = mapped_column(Boolean, default=False)  # requisito: chat aberto
+    req_members: Mapped[int | None] = mapped_column(Integer, default=0)  # requisito: mínimo de membros
+    req_note: Mapped[str | None] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
 

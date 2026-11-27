@@ -196,9 +196,11 @@ def screen_auto(sch: Schedule) -> Screen:
 
 async def screen_dests(child: ChildBot, db: Database, sch: Schedule) -> Screen:
     if sch.kind == "parc":
+        from .partners import schedule_pids
+        pids = await schedule_pids(db, sch)
         async with db.session() as s:
             rows_ = list(await s.scalars(select(ChildChat).where(ChildChat.child_id == child.id,
-                                                                 ChildChat.partner_of == sch.partnership_id)))
+                                                                 ChildChat.partner_of.in_(pids))))
             chosen = set(await s.scalars(select(ScheduleDest.chat_row_id).where(ScheduleDest.schedule_id == sch.id)))
         text = ("📍 <b>Destinos</b>\n\nOs grupos do parceiro onde o seu bot já entrou (os que ele liberou). "
                 "Toque para pausar ou voltar a postar em um deles.")

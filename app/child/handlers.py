@@ -536,6 +536,11 @@ async def on_my_member(event: ChatMemberUpdated, bot: Bot, child: ChildBot, db: 
             await s.commit()
             rid = row.id
         await partners.sync_dests(db, partnership)
+        was_admin = old.status in ("administrator", "creator")
+        if was_admin and new.status not in ("administrator", "creator"):  # tiraram o bot sem combinar
+            await partners.on_bot_lost(db, manager, child, partnership, chat.title or str(chat.id),
+                                       removed=new.status in ("left", "kicked"))
+            return
         state_txt = "entrou no" if new.status in ("member", "administrator", "creator") else "saiu do"
         await _tell_owner(bot, manager, child, f"🤝 O @{escape(child.username)} {state_txt} grupo <b>{title}</b> do "
                                                "parceiro. A divulgação da parceria usa esse grupo automaticamente.")

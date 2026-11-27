@@ -364,6 +364,12 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
         if not text.strip() and not media:
             await _set_error(db, sch_id, "mensagem vazia: use ✍️ Personalizar mensagem")
             return 0, "mensagem vazia"
+        if partnership is not None:
+            from .partners import limits_error
+            why = limits_error(partnership, text)
+            if why:
+                await _set_error(db, sch_id, why)
+                return 0, why
     else:
         acv = await get_acervo(db, sch.child_id)
         if acv.paused and not force:
@@ -412,7 +418,7 @@ async def _run_schedule(bot: Bot, db: Database, settings, sch_id: int, only_chat
                 errors.append(f"{c.title}: não fixou ({e.message})")
         async with db.session() as s:
             row = await s.get(ScheduleDest, d.id)
-            row.last_message_ids, row.msg_counter = ",".join(map(str, ids)), 0
+            row.last_message_ids, row.msg_counter, row.last_sent_at = ",".join(map(str, ids)), 0, utcnow()
             if sch.auto_delete_min:
                 s.add(PendingDelete(child_id=sch.child_id, chat_id=c.chat_id, message_ids=",".join(map(str, ids)),
                                     due_at=utcnow() + timedelta(minutes=sch.auto_delete_min)))
