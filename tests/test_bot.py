@@ -562,13 +562,24 @@ async def main():
           n1.hour == 10 and n1.minute == 23 and (n2.day, n2.hour, n2.minute) == (19, 8, 23)
           and n3.weekday() == 0 and n4 is None)
 
-    # --- palavras proibidas
+    # --- palavras proibidas (listas com destinos)
+    from app.db import WordList
     calls = await cclick(OWNER, CP(s="words").pack())
-    check("palavras: lista os grupos", any("Grupo da Ana" in m.text for m in texts(calls)))
-    await cclick(OWNER, CP(s="wf", a="act", i=grp_row.id, j=4).pack())
-    await cclick(OWNER, CP(s="wf", a="add", i=grp_row.id).pack())
+    check("palavras: tela de listas", any("➕ Nova lista" in buttons(m) for m in texts(calls)))
+    await cclick(OWNER, CP(s="words", a="new").pack())
+    async with db.session() as s:
+        wl1 = await s.scalar(select(WordList).where(WordList.child_id == c1.id))
+    W = wl1.id
+    await cclick(OWNER, CP(s="wl", a="act", i=W, j=4).pack())
+    await cclick(OWNER, CP(s="wl", a="add", i=W).pack())
     calls = await csay(OWNER, "promo, chama no pv")
     check("palavras: adiciona várias", any("Palavras na lista: 2" in m.text for m in texts(calls)))
+    calls = await csay(BIA, "Olha a PROMOÇÃO", chat=ANA_G)
+    check("palavras: sem grupo escolhido não pune", not any(isinstance(m, BanChatMember) for _, m in calls))
+    calls = await cclick(OWNER, CP(s="wld", i=W).pack())
+    check("palavras: destinos mostram os grupos e Todos", any("🌐 Todos os grupos" in " ".join(buttons(m))
+                                                             and "Grupo da Ana" in " ".join(buttons(m)) for m in texts(calls)))
+    await cclick(OWNER, CP(s="wld", a="tog", i=W, j=grp_row.id).pack())
     session.take()
     await csay(OWNER, "promoção aqui", chat=ANA_G)
     calls = session.take()
@@ -576,13 +587,12 @@ async def main():
     calls = await csay(BIA, "Olha a PROMOÇÃO, chamá no PV", chat=ANA_G)
     check("palavras: apaga e bane (ignora acento/maiúscula)", any(isinstance(m, DeleteMessage) for _, m in calls)
           and any(isinstance(m, BanChatMember) and m.user_id == 333 for _, m in calls))
-    await cclick(OWNER, CP(s="wf", a="match", i=grp_row.id).pack())
+    await cclick(OWNER, CP(s="wl", a="match", i=W).pack())
     calls = await csay(BIA, "promoção", chat=ANA_G)
     check("palavras: busca exata não pega dentro de outra palavra", not any(isinstance(m, BanChatMember) for _, m in calls))
-    await cclick(OWNER, CP(s="wf", a="act", i=grp_row.id, j=1).pack())
-    await cclick(OWNER, CP(s="wf", a="wl", i=grp_row.id).pack())  # 3 -> 4
+    await cclick(OWNER, CP(s="wl", a="act", i=W, j=1).pack())
     async with db.session() as s:
-        f = await s.scalar(select(WordFilter).where(WordFilter.chat_row_id == grp_row.id))
+        f = await s.get(WordList, W)
         f.warn_limit = 2
         await s.commit()
     calls = await csay(BIA, "promo", chat=ANA_G)
@@ -590,10 +600,26 @@ async def main():
           and not any(isinstance(m, RestrictChatMember) for _, m in calls))
     calls = await csay(BIA, "promo", chat=ANA_G)
     check("palavras: na 2ª advertência silencia", any(isinstance(m, RestrictChatMember) for _, m in calls))
-    await cclick(OWNER, CP(s="wf", a="rem", i=grp_row.id).pack())
+    await cclick(OWNER, CP(s="wl", a="rem", i=W).pack())
     await csay(OWNER, "promo")
     calls = await csay(BIA, "promo", chat=ANA_G)
     check("palavras: remover da lista", not any(isinstance(m, (RestrictChatMember, BanChatMember)) for _, m in calls))
+    # segunda lista para todos os grupos
+    await cclick(OWNER, CP(s="words", a="new").pack())
+    async with db.session() as s:
+        wl2 = await s.scalar(select(WordList).where(WordList.child_id == c1.id).order_by(WordList.id.desc()))
+    await cclick(OWNER, CP(s="wl", a="act", i=wl2.id, j=3).pack())
+    await cclick(OWNER, CP(s="wl", a="add", i=wl2.id).pack())
+    await csay(OWNER, "palavrao")
+    await cclick(OWNER, CP(s="wld", a="all", i=wl2.id).pack())
+    calls = await csay(BIA, "que palavrão", chat=ANA_G)
+    check("palavras: lista em 🌐 todos os grupos vale sem escolher um por um", any(isinstance(m, RestrictChatMember) for _, m in calls))
+    await cclick(OWNER, CP(s="wl", a="name", i=wl2.id).pack())
+    calls = await csay(OWNER, "Palavrões")
+    check("palavras: renomear lista", any("<b>Palavrões</b>" in m.text for m in texts(calls)))
+    await cclick(OWNER, CP(s="wl", a="kill2", i=wl2.id).pack())
+    calls = await cclick(OWNER, CP(s="words").pack())
+    check("palavras: apagar lista", any("Palavrões" not in m.text and "Lista 1" in m.text for m in texts(calls)))
 
     # ================= v4 =================
     from app.child.acervo import split_existing_albums
@@ -686,7 +712,7 @@ async def main():
 
     # palavras proibidas → registro com botões
     async with db.session() as s:
-        f = await s.scalar(select(WordFilter).where(WordFilter.chat_row_id == grp_row.id))
+        f = await s.get(WordList, W)
         f.action, f.words, f.match, f.duration_min = "mute", "spam", "contains", 1440
         await s.commit()
     calls = await csay(BIA, "olha o SPAM", chat=ANA_G)
@@ -699,7 +725,7 @@ async def main():
     um = [m for _, m in calls if isinstance(m, RestrictChatMember)]
     check("v5: Desmutar devolve a permissão de falar", um and um[0].permissions.can_send_messages)
     async with db.session() as s:
-        f = await s.get(WordFilter, f.id)
+        f = await s.get(WordList, W)
         f.action = "ban"
         await s.commit()
     calls = await csay(BIA, "spam", chat=ANA_G)
@@ -708,7 +734,7 @@ async def main():
     calls = await cclick(OWNER, LG(a="unban", c=-100604, u=333).pack())
     check("v5: Desbanir", any(type(m).__name__ == "UnbanChatMember" for _, m in calls))
     async with db.session() as s:
-        f = await s.get(WordFilter, f.id)
+        f = await s.get(WordList, W)
         f.action = "off"
         await s.commit()
 

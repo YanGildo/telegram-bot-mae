@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
-                        delete, inspect)
+                        delete, inspect, select)
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -271,6 +271,33 @@ class WordFilter(Base):
     words: Mapped[str] = mapped_column(Text, default="")  # uma por linha
 
 
+class WordList(Base):
+    """Lista de palavras proibidas (v15): configura uma vez e escolhe em quais grupos vale."""
+
+    __tablename__ = "word_lists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_bots.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60), default="Lista")
+    action: Mapped[str] = mapped_column(String(8), default="off")  # off | warn | kick | mute | ban
+    delete: Mapped[bool] = mapped_column(Boolean, default=True)
+    duration_min: Mapped[int] = mapped_column(Integer, default=0)
+    warn_limit: Mapped[int] = mapped_column(Integer, default=3)
+    warn_then: Mapped[str] = mapped_column(String(8), default="mute")
+    match: Mapped[str] = mapped_column(String(8), default="contains")
+    words: Mapped[str] = mapped_column(Text, default="")
+    all_chats: Mapped[bool] = mapped_column(Boolean, default=False)  # todos os grupos, inclusive os novos
+
+
+class WordListChat(Base):
+    __tablename__ = "word_list_chats"
+    __table_args__ = (UniqueConstraint("list_id", "chat_row_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    list_id: Mapped[int] = mapped_column(ForeignKey("word_lists.id", ondelete="CASCADE"), index=True)
+    chat_row_id: Mapped[int] = mapped_column(ForeignKey("child_chats.id", ondelete="CASCADE"), index=True)
+
+
 class Partnership(Base):
     """Parceria de divulgação entre dois bots filhos: um posta nos grupos do outro, dentro do acordo."""
 
@@ -389,6 +416,24 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(_add_missing_columns)
+        await self._migrate_word_filters()
+
+    async def _migrate_word_filters(self) -> None:
+        """v15: as listas por grupo viram «listas» com destinos (uma por grupo, com o nome dele)."""
+        async with self.session() as s:
+            old = list(await s.scalars(select(WordFilter)))
+            for f in old:
+                if (f.words or "").strip() or f.action != "off":
+                    chat = await s.get(ChildChat, f.chat_row_id)
+                    wl = WordList(child_id=f.child_id, name=(chat.title if chat else "Lista")[:60] or "Lista",
+                                  action=f.action, delete=f.delete, duration_min=f.duration_min,
+                                  warn_limit=f.warn_limit, warn_then=f.warn_then, match=f.match, words=f.words or "")
+                    s.add(wl)
+                    await s.flush()
+                    s.add(WordListChat(list_id=wl.id, chat_row_id=f.chat_row_id))
+                await s.delete(f)
+            if old:
+                await s.commit()
 
     async def prune_updates(self, hours: int = 48) -> int:
         cutoff = utcnow() - timedelta(hours=hours)

@@ -12,10 +12,10 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, ChatPermissions, Message
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .. import repo
-from ..db import ChildBot, ChildChat, Database, PendingDelete, WarnCount, WordFilter, utcnow
+from ..db import ChildBot, ChildChat, Database, PendingDelete, WarnCount, WordList, WordListChat, utcnow
 from ..ui import CP, Screen, cbtn, kb, show
 from .flow import ask
 from .logs import LG, action_markup, send_log, who
@@ -35,11 +35,11 @@ def normalize(text: str) -> str:
     return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
-def word_list(f: WordFilter) -> list[str]:
+def word_list(f) -> list[str]:
     return [w for w in (f.words or "").splitlines() if w.strip()]
 
 
-def find_banned(text: str, f: WordFilter) -> str | None:
+def find_banned(text: str, f) -> str | None:
     norm = normalize(text)
     for w in word_list(f):
         nw = normalize(w.strip())
@@ -53,7 +53,7 @@ def find_banned(text: str, f: WordFilter) -> str | None:
     return None
 
 
-def penalty_text(f: WordFilter) -> str:
+def penalty_text(f) -> str:
     if f.action == "off":
         return "Desativado"
     if f.action == "warn":
@@ -65,79 +65,118 @@ def penalty_text(f: WordFilter) -> str:
     return base
 
 
-async def get_filter(db: Database, child_id: int, chat_row_id: int) -> WordFilter:
+async def get_list(db: Database, child_id: int, list_id: int) -> WordList | None:
     async with db.session() as s:
-        f = await s.scalar(select(WordFilter).where(WordFilter.child_id == child_id, WordFilter.chat_row_id == chat_row_id))
-        if f is None:
-            f = WordFilter(child_id=child_id, chat_row_id=chat_row_id)
-            s.add(f)
-            await s.commit()
-        return f
+        wl = await s.get(WordList, list_id)
+    return wl if wl is not None and wl.child_id == child_id else None
+
+
+async def list_chats(db: Database, wl: WordList) -> set[int]:
+    async with db.session() as s:
+        return set(await s.scalars(select(WordListChat.chat_row_id).where(WordListChat.list_id == wl.id)))
+
+
+async def lists_for_chat(db: Database, child_id: int, chat_row_id: int) -> list[WordList]:
+    """As listas que valem num grupo."""
+    async with db.session() as s:
+        picked = set(await s.scalars(select(WordListChat.list_id).where(WordListChat.chat_row_id == chat_row_id)))
+        rows = list(await s.scalars(select(WordList).where(WordList.child_id == child_id).order_by(WordList.id)))
+    return [w for w in rows if w.all_chats or w.id in picked]
+
+
+def _groups(chats: list[ChildChat]) -> list[ChildChat]:
+    return [c for c in chats if c.type != ChatType.CHANNEL and not c.partner_of
+            and c.bot_status in ("administrator", "creator", "member")]
 
 
 # ---------- telas ----------
 
-async def screen_groups(child: ChildBot, db: Database) -> Screen:
-    groups = [c for c in await repo.child_chats(db, child.id) if c.type != ChatType.CHANNEL]
+async def screen_lists(child: ChildBot, db: Database) -> Screen:
+    async with db.session() as s:
+        lists = list(await s.scalars(select(WordList).where(WordList.child_id == child.id).order_by(WordList.id)))
     lines = ["🚫 <b>Palavras proibidas</b>\n",
-             "Escolha o grupo. Cada grupo tem a própria lista e a própria punição, sem limite de palavras.\n",
+             "Monte listas (ex.: Lista 1 = divulgação, Lista 2 = palavrões). Cada lista tem as palavras, a punição "
+             "e os grupos onde vale: configure uma vez e mande para todos os grupos de uma vez.\n",
              "O bot precisa ser administrador com <b>Apagar mensagens</b> e <b>Banir usuários</b>. "
              "Admins do grupo e do bot nunca são punidos.\n"]
     rows = []
-    async with db.session() as s:
-        for c in groups:
-            f = await s.scalar(select(WordFilter).where(WordFilter.child_id == child.id, WordFilter.chat_row_id == c.id))
-            on = f is not None and f.action != "off" and word_list(f)
-            n = len(word_list(f)) if f else 0
-            lines.append(f"{'✅' if on else '❌'} {escape(c.title)} · {n} palavra(s)")
-            rows.append([cbtn(f"{'✅' if on else '❌'} {c.title[:40]}", "wf", "", c.id)])
-    if not groups:
-        lines.append("<i>O bot ainda não está em nenhum grupo.</i>")
-    return "\n".join(lines), kb(*rows, [cbtn("« Painel", "home")])
+    for wl in lists:
+        n = len(word_list(wl))
+        g = "todos os grupos" if wl.all_chats else f"{len(await list_chats(db, wl))} grupo(s)"
+        on = wl.action != "off" and n
+        lines.append(f"{'✅' if on else '❌'} <b>{escape(wl.name)}</b> · {n} palavra(s) · {g} · {penalty_text(wl)}")
+        rows.append([cbtn(f"{'✅' if on else '❌'} {wl.name[:40]}", "wl", "", wl.id)])
+    if not lists:
+        lines.append("<i>Nenhuma lista ainda. Toque em ➕ Nova lista.</i>")
+    return "\n".join(lines)[:4000], kb([cbtn("➕ Nova lista", "words", "new", style="primary")], *rows,
+                                        [cbtn("« Painel", "home")])
 
 
-async def screen_filter(child: ChildBot, db: Database, chat: ChildChat) -> Screen:
-    f = await get_filter(db, child.id, chat.id)
-    i = chat.id
-    text = (f"🔤 <b>Palavras proibidas</b> · {escape(chat.title)}\n\n"
-            "Coloque uma punição para quem usar as palavras da lista.\n\n"
-            f"Penalidade: <b>{penalty_text(f)}</b>\n"
-            f"Apagar a mensagem: {'Sim ✅' if f.delete else 'Não ❌'}\n"
-            f"Busca: {'palavra exata' if f.match == 'exact' else 'contém o termo'} · ignora acentos e maiúsculas\n"
-            f"Palavras na lista: {len(word_list(f))}\n\n"
+async def screen_list(child: ChildBot, db: Database, wl: WordList) -> Screen:
+    i = wl.id
+    chosen = await list_chats(db, wl)
+    names = [c.title for c in _groups(await repo.child_chats(db, child.id)) if c.id in chosen]
+    where = "🌐 todos os grupos (inclusive os novos)" if wl.all_chats else \
+        (", ".join(escape(n) for n in names[:8]) + (f" e mais {len(names) - 8}" if len(names) > 8 else "")
+         if names else "❌ nenhum: escolha em 📍 Grupos")
+    text = (f"🔤 <b>{escape(wl.name)}</b>\n\n"
+            f"Penalidade: <b>{penalty_text(wl)}</b>\n"
+            f"Apagar a mensagem: {'Sim ✅' if wl.delete else 'Não ❌'}\n"
+            f"Busca: {'palavra exata' if wl.match == 'exact' else 'contém o termo'} · ignora acentos e maiúsculas\n"
+            f"Palavras na lista: {len(word_list(wl))}\n"
+            f"📍 Vale em: {where}\n\n"
             "<b>O que cada botão faz</b>\n"
             "• ❌ ❕ ❗ 🔇 🚷: escolhe a punição.\n"
             "• 🗑 Apagar mensagens: apaga ou não a mensagem com a palavra.\n"
             "• ⏱ Duração: por quanto tempo vale o silenciar/ban.\n"
             "• 🔎 Busca: <i>contém</i> pega 'promo' dentro de 'promoção'; <i>exata</i> só a palavra inteira.\n"
-            "• ➕ / ➖: adiciona ou tira palavras (várias de uma vez, uma por linha ou separadas por vírgula).")
+            "• ➕ / ➖: adiciona ou tira palavras (várias de uma vez, uma por linha ou separadas por vírgula).\n"
+            "• 📍 Grupos: onde esta lista vale.")
 
     def act(k):
-        return cbtn(("✅ " if f.action == k else "") + ACTIONS[k], "wf", "act", i, j=list(ACTIONS).index(k))
+        return cbtn(("✅ " if wl.action == k else "") + ACTIONS[k], "wl", "act", i, j=list(ACTIONS).index(k))
     rows = [[act("off"), act("warn"), act("kick")], [act("mute"), act("ban")],
-            [cbtn(f"🗑 Apagar mensagens {'✅' if f.delete else '❌'}", "wf", "del", i)],
-            [cbtn("⏱ Definir a duração", "wf", "dur", i)]]
-    if f.action == "warn":
-        rows.append([cbtn(f"⚠️ Advertências até punir: {f.warn_limit}", "wf", "wl", i),
-                     cbtn("Depois: " + {"mute": "🔇", "kick": "❗", "ban": "🚷"}[f.warn_then], "wf", "wt", i)])
-    rows += [[cbtn("🔎 Busca: " + ("exata" if f.match == "exact" else "contém"), "wf", "match", i)],
-             [cbtn("➕ Adicionar", "wf", "add", i), cbtn("➖ Remover", "wf", "rem", i)],
-             [cbtn(f"🔤 Lista ({len(word_list(f))})", "wf", "list", i)],
-             [cbtn("« Grupos", "words")]]
+            [cbtn(f"🗑 Apagar mensagens {'✅' if wl.delete else '❌'}", "wl", "del", i)],
+            [cbtn("⏱ Definir a duração", "wl", "dur", i)]]
+    if wl.action == "warn":
+        rows.append([cbtn(f"⚠️ Advertências até punir: {wl.warn_limit}", "wl", "wl", i),
+                     cbtn("Depois: " + {"mute": "🔇", "kick": "❗", "ban": "🚷"}[wl.warn_then], "wl", "wt", i)])
+    rows += [[cbtn("🔎 Busca: " + ("exata" if wl.match == "exact" else "contém"), "wl", "match", i)],
+             [cbtn("➕ Adicionar", "wl", "add", i), cbtn("➖ Remover", "wl", "rem", i)],
+             [cbtn(f"🔤 Ver palavras ({len(word_list(wl))})", "wl", "list", i)],
+             [cbtn("📍 Grupos " + ("(todos)" if wl.all_chats else f"({len(names)})"), "wld", "", i, style="primary")],
+             [cbtn("✏️ Nome", "wl", "name", i), cbtn("🗑 Apagar lista", "wl", "kill1", i)],
+             [cbtn("« Listas", "words")]]
     return text, kb(*rows)
 
 
-def screen_duration(f: WordFilter, i: int) -> Screen:
+async def screen_dests(child: ChildBot, db: Database, wl: WordList) -> Screen:
+    chosen = await list_chats(db, wl)
+    groups = _groups(await repo.child_chats(db, child.id))
+    text = (f"📍 <b>Grupos</b> · {escape(wl.name)}\n\n"
+            "Escolha onde esta lista vale. <b>🌐 Todos os grupos</b> inclui também os grupos que você adicionar "
+            "depois.")
+    rows = [[cbtn(("✅ " if wl.all_chats else "▫️ ") + "🌐 Todos os grupos", "wld", "all", wl.id,
+                  style="success" if wl.all_chats else None)]]
+    if not wl.all_chats:
+        rows += [[cbtn(("✅ " if c.id in chosen else "▫️ ") + (c.title or str(c.chat_id))[:40], "wld", "tog", wl.id,
+                       j=c.id)] for c in groups]
+    if not groups:
+        text += "\n\n<i>O bot ainda não está em nenhum grupo.</i>"
+    return text, kb(*rows, [cbtn("« Voltar", "wl", "", wl.id)])
+
+
+def screen_duration(f: WordList, i: int) -> Screen:
     text = ("⏱ <b>Duração da punição</b>\n\nVale para silenciar e ban (também quando a advertência chega no limite). "
             "Kick não tem duração: a pessoa sai e pode voltar.")
-    btns = [cbtn(("✅ " if f.duration_min == d else "") + (interval_text(d) if d else "Para sempre"), "wf", "setdur", i, j=d)
+    btns = [cbtn(("✅ " if f.duration_min == d else "") + (interval_text(d) if d else "Para sempre"), "wl", "setdur", i, j=d)
             for d in DURATIONS]
-    return text, kb(btns[:3], btns[3:6], btns[6:], [cbtn("« Voltar", "wf", "", i)])
+    return text, kb(btns[:3], btns[3:6], btns[6:], [cbtn("« Voltar", "wl", "", i)])
 
 
 # ---------- botões ----------
 
-@router.callback_query(CP.filter(F.s.in_({"words", "wf"})))
+@router.callback_query(CP.filter(F.s.in_({"words", "wl", "wld"})))
 async def on_words(cb: CallbackQuery, callback_data: CP, state: FSMContext, child: ChildBot, db: Database) -> None:
     if not await repo.is_child_admin(db, child, cb.from_user.id):
         await cb.answer("Só o dono e os admins do bot usam este painel.", show_alert=True)
@@ -145,65 +184,109 @@ async def on_words(cb: CallbackQuery, callback_data: CP, state: FSMContext, chil
     s_, a, i, j = callback_data.s, callback_data.a, callback_data.i, callback_data.j
     await state.clear()
     if s_ == "words":
+        if a == "new":
+            async with db.session() as s:
+                n = len(list(await s.scalars(select(WordList.id).where(WordList.child_id == child.id))))
+                wl = WordList(child_id=child.id, name=f"Lista {n + 1}")
+                s.add(wl)
+                await s.commit()
+            await cb.answer()
+            return await show(cb, await screen_list(child, db, wl))
         await cb.answer()
-        return await show(cb, await screen_groups(child, db))
-    async with db.session() as s:
-        chat = await s.get(ChildChat, i)
-    if chat is None or chat.child_id != child.id:
-        await cb.answer("Grupo não encontrado.", show_alert=True)
-        return
-    f = await get_filter(db, child.id, i)
+        return await show(cb, await screen_lists(child, db))
+    wl = await get_list(db, child.id, i)
+    if wl is None:
+        await cb.answer("Lista não encontrada.", show_alert=True)
+        return await show(cb, await screen_lists(child, db))
 
     async def save(**fields):
         async with db.session() as s:
-            row = await s.get(WordFilter, f.id)
+            row = await s.get(WordList, wl.id)
             for k, v in fields.items():
                 setattr(row, k, v)
             await s.commit()
 
+    if s_ == "wld":
+        if a == "all":
+            await save(all_chats=not wl.all_chats)
+        elif a == "tog":
+            async with db.session() as s:
+                c = await s.get(ChildChat, j)
+                if c is None or c.child_id != child.id:
+                    await cb.answer("Grupo não encontrado.", show_alert=True)
+                    return
+                row = await s.scalar(select(WordListChat).where(WordListChat.list_id == wl.id,
+                                                                WordListChat.chat_row_id == j))
+                if row:
+                    await s.delete(row)
+                else:
+                    s.add(WordListChat(list_id=wl.id, chat_row_id=j))
+                await s.commit()
+        await cb.answer()
+        return await show(cb, await screen_dests(child, db, await get_list(db, child.id, i)))
+
     if a == "act" and 0 <= j < len(ACTIONS):
         await save(action=list(ACTIONS)[j])
     elif a == "del":
-        await save(delete=not f.delete)
+        await save(delete=not wl.delete)
     elif a == "match":
-        await save(match="contains" if f.match == "exact" else "exact")
+        await save(match="contains" if wl.match == "exact" else "exact")
     elif a == "wl":
-        await save(warn_limit=f.warn_limit % 5 + 1)
+        await save(warn_limit=wl.warn_limit % 5 + 1)
     elif a == "wt":
-        await save(warn_then={"mute": "kick", "kick": "ban", "ban": "mute"}[f.warn_then])
+        await save(warn_then={"mute": "kick", "kick": "ban", "ban": "mute"}[wl.warn_then])
     elif a == "dur":
         await cb.answer()
-        return await show(cb, screen_duration(f, i))
+        return await show(cb, screen_duration(wl, i))
     elif a == "setdur" and j in DURATIONS:
         await save(duration_min=j)
     elif a == "add":
         return await ask(cb, state, "words_add", "➕ <b>Adicionar palavras</b>\n\nEnvie uma ou várias, uma por linha "
                          "ou separadas por vírgula. Pode ser frase (ex.: <code>chama no pv</code>).",
-                         cbtn("❌ Cancelar", "wf", "", i), chat_row=i)
+                         cbtn("❌ Cancelar", "wl", "", i), list_id=i)
     elif a == "rem":
         return await ask(cb, state, "words_rem", "➖ <b>Remover palavras</b>\n\nEnvie as palavras que quer tirar "
                          "(uma por linha ou separadas por vírgula). Envie <code>*</code> para apagar a lista toda.",
-                         cbtn("❌ Cancelar", "wf", "", i), chat_row=i)
+                         cbtn("❌ Cancelar", "wl", "", i), list_id=i)
+    elif a == "name":
+        return await ask(cb, state, "words_name", "✏️ <b>Nome da lista</b>\n\nEx.: <code>Divulgação</code>.",
+                         cbtn("❌ Cancelar", "wl", "", i), list_id=i)
     elif a == "list":
-        words = word_list(f)
+        words = word_list(wl)
         body = "\n".join(f"• {escape(w)}" for w in words) or "<i>Lista vazia.</i>"
         await cb.answer()
-        return await show(cb, (f"🔤 <b>Lista</b> · {escape(chat.title)}\n\n{body}"[:4000],
-                               kb([cbtn("« Voltar", "wf", "", i)])))
+        return await show(cb, (f"🔤 <b>{escape(wl.name)}</b>\n\n{body}"[:4000], kb([cbtn("« Voltar", "wl", "", i)])))
+    elif a == "kill1":
+        await cb.answer()
+        return await show(cb, (f"🗑 <b>Apagar «{escape(wl.name)}»?</b>\n\nAs palavras dela deixam de valer em todos "
+                               "os grupos.", kb([cbtn("🗑 Sim, apagar", "wl", "kill2", i, style="danger"),
+                                                 cbtn("« Voltar", "wl", "", i)])))
+    elif a == "kill2":
+        async with db.session() as s:
+            await s.execute(delete(WordListChat).where(WordListChat.list_id == wl.id))
+            await s.execute(delete(WordList).where(WordList.id == wl.id))
+            await s.commit()
+        await cb.answer("Lista apagada.")
+        return await show(cb, await screen_lists(child, db))
     await cb.answer()
-    await show(cb, await screen_filter(child, db, chat))
+    await show(cb, await screen_list(child, db, await get_list(db, child.id, i)))
 
 
 async def handle_input(kind: str, data: dict, message: Message, child: ChildBot, db: Database) -> Screen | str:
-    i = data.get("chat_row", 0)
-    async with db.session() as s:
-        chat = await s.get(ChildChat, i)
-    if chat is None or chat.child_id != child.id:
-        return "Grupo não encontrado."
-    f = await get_filter(db, child.id, i)
+    wl = await get_list(db, child.id, data.get("list_id", 0))
+    if wl is None:
+        return "Lista não encontrada."
     raw = (message.text or "").strip()
+    if kind == "words_name":
+        if not raw:
+            return "Envie o nome ou /cancelar."
+        async with db.session() as s:
+            row = await s.get(WordList, wl.id)
+            row.name = raw[:60]
+            await s.commit()
+        return await screen_list(child, db, await get_list(db, child.id, wl.id))
     entries = [w.strip() for w in re.split(r"[\n,]+", raw) if w.strip()]
-    words = word_list(f)
+    words = word_list(wl)
     if kind == "words_add":
         known = {normalize(w) for w in words}
         added = [w for w in entries if normalize(w) not in known]
@@ -214,10 +297,10 @@ async def handle_input(kind: str, data: dict, message: Message, child: ChildBot,
         drop = {normalize(w) for w in entries}
         words = [w for w in words if normalize(w) not in drop]
     async with db.session() as s:
-        row = await s.get(WordFilter, f.id)
+        row = await s.get(WordList, wl.id)
         row.words = "\n".join(words)
         await s.commit()
-    return await screen_filter(child, db, chat)
+    return await screen_list(child, db, await get_list(db, child.id, wl.id))
 
 
 # ---------- aplicar no grupo ----------
@@ -278,17 +361,18 @@ async def on_group_text(message: Message, bot: Bot, child: ChildBot, db: Databas
         async with db.session() as s:
             chat = await s.scalar(select(ChildChat).where(ChildChat.child_id == child.id,
                                                           ChildChat.chat_id == message.chat.id))
-            f = await s.scalar(select(WordFilter).where(WordFilter.child_id == child.id,
-                                                        WordFilter.chat_row_id == chat.id)) if chat else None
-        if f is not None and f.action != "off" and chat is not None and chat.f_words is not False:
-            word = find_banned(text, f)
-            if word and not await _is_exempt(bot, db, child, message.chat.id, user.id):
-                await _apply(bot, db, child, message, f, word)
-                return
+        if chat is not None and chat.f_words is not False:
+            for f in await lists_for_chat(db, child.id, chat.id):
+                if f.action == "off":
+                    continue
+                word = find_banned(text, f)
+                if word and not await _is_exempt(bot, db, child, message.chat.id, user.id):
+                    await _apply(bot, db, child, message, f, word)
+                    return
     await on_group_message(bot, db, settings, child.id, message.chat.id)
 
 
-async def _apply(bot: Bot, db: Database, child: ChildBot, message: Message, f: WordFilter, word: str = "") -> None:
+async def _apply(bot: Bot, db: Database, child: ChildBot, message: Message, f, word: str = "") -> None:
     chat_id, user = message.chat.id, message.from_user
     where = escape(message.chat.title or str(chat_id))
     said = escape((message.text or message.caption or "")[:200])

@@ -1,4 +1,4 @@
-# Bot Mãe — versão 14
+# Bot Mãe — versão 15
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
