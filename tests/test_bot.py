@@ -755,7 +755,7 @@ async def main():
 
     # vários conteúdos
     calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
-    check("v5: personalizar tem Vários conteúdos", any("📚 Vários conteúdos (0)" in buttons(m) for m in texts(calls)))
+    check("v5: personalizar tem Vários conteúdos", any("📸 Mídias (1)" in buttons(m) for m in texts(calls)))
     await cclick(OWNER, CP(s="msgi", a="add", i=sm.id).pack())
     await csay(OWNER, "Conteúdo A")
     await feed(child_dp, cbot, message=Message(message_id=nid(), date=NOW, chat=Chat(id=111, type="private"), from_user=OWNER,
@@ -889,7 +889,7 @@ async def main():
     await cclick(OWNER, CP(s="msgc", a="text", i=sm.id).pack())
     await csay(OWNER, "Copy 1")
     calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
-    check("v8: personalizar tem Variações de texto", any("📝 Variações de texto (1)" in buttons(m) for m in texts(calls)))
+    check("v8: personalizar tem Variações de texto", any("📄 Texto (1)" in buttons(m) for m in texts(calls)))
     for t in ("Copy 2", "Copy 3"):
         await cclick(OWNER, CP(s="msgv", a="add", i=sm.id).pack())
         calls = await csay(OWNER, t)
@@ -922,7 +922,7 @@ async def main():
     calls = await cclick(OWNER, CP(s="msgc", a="full", i=sm.id).pack())
     check("v11: visualização completa mostra um conteúdo da lista", any(isinstance(m, SendPhoto) and m.chat_id == 111 for _, m in calls))
     calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
-    check("v11: tela indica que as mídias vêm do 📚", any("usa as do 📚" in m.text for m in texts(calls)))
+    check("v11: tela indica que as mídias vêm do 📚", any("em rodízio" in m.text for m in texts(calls)))
 
     # ================= v10: funções por grupo, textos sorteados um por um =================
     calls = await cclick(OWNER, CP(s="chat", i=grp_row.id).pack())

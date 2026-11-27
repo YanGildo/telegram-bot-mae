@@ -243,14 +243,15 @@ def _variants(sch: Schedule) -> list[str]:
 
 async def screen_variants(db: Database, sch: Schedule) -> Screen:
     var = _variants(sch)
-    lines = ["📝 <b>Variações de texto</b>\n",
+    lines = ["📄 <b>Texto e variações</b>\n",
              "Cada envio usa o próximo texto da lista, em ordem (1, 2, 3, 1…). O 1 é o texto principal "
              "(📄 Texto). Conteúdo que tem texto próprio sai sempre com o dele.\n"]
     lines.append(f"<b>1.</b> {escape(strip_tags(sch.text_html)[:120]) or '<i>(sem texto principal)</i>'}")
     for n, t in enumerate(var, 2):
         lines.append(f"<b>{n}.</b> {escape(strip_tags(t)[:120])}")
     lines.append("\n• ➕ Adicionar variação: mande o texto (formatação e emoji premium ficam).\n• 🗑 tira a variação.")
-    rows = [[cbtn("➕ Adicionar variação", "msgv", "add", sch.id, style="primary")]]
+    rows = [[cbtn("✏️ Texto principal (1)", "msgc", "text", sch.id),
+             cbtn("➕ Adicionar variação", "msgv", "add", sch.id, style="primary")]]
     rows += [[cbtn(f"🗑 {n}", "msgv", "rm", sch.id, j=k) for k, n in list(enumerate(range(2, len(var) + 2)))[x:x + 5]]
              for x in range(0, len(var), 5)]
     return "\n".join(lines)[:4000], kb(*rows, [cbtn("« Voltar", "msgc", "", sch.id)])
@@ -292,23 +293,22 @@ async def screen_content(db: Database, sch: Schedule) -> Screen:
     n_var = len(_variants(sch))
     text = ("✍️ <b>Personalizar mensagem</b>\n\n"
             f"📄 Texto {'✅' if sch.text_html else '❌'}" + (f" + {n_var} variação(ões)" if n_var else "") + "\n"
-            + (f"📸 Mídias: usa as do 📚 Vários conteúdos ({n_items})\n" if n_items else
+            + (f"📸 Mídias: {n_items} em rodízio\n" if n_items else
                f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n")
             + 
             f"🔠 Botões de link {'✅' if rows_btn else '❌'}\n"
             f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n"
-            f"📚 Vários conteúdos: {n_items or '❌'}\n\n"
+            "\n"
             "👉 Use os botões abaixo para definir cada parte. 👀 Veja mostra só aquela parte; "
             "👀 Visualização completa manda a mensagem inteira aqui, do jeito que vai sair.\n\n"
-            "📝 <b>Variações de texto</b>: outras versões da copy. Cada envio usa a próxima (1, 2, 3, 1…).\n"
-            "📚 <b>Vários conteúdos</b>: vários posts (mídia, com ou sem texto) e a programação usa um por vez.\n"
+            "📄 <b>Texto</b>: o texto principal e as variações da copy. Cada envio usa a próxima (1, 2, 3, 1…).\n"
+            "📸 <b>Mídias</b>: várias mídias (com ou sem texto próprio) e a programação usa uma por vez.\n"
             "Conteúdo <b>com texto próprio</b> (ex.: vídeo de prova social) sai sempre com o texto dele; "
             "conteúdo <b>sem texto</b> sai com a próxima variação.")
     i = sch.id
-    return text, kb([cbtn(f"📝 Variações de texto ({n_var + (1 if sch.text_html else 0)})", "msgv", "", i),
-                     cbtn(f"📚 Vários conteúdos ({n_items})", "msgi", "", i)],
-                    [cbtn("📄 Texto", "msgc", "text", i), cbtn("👀 Veja", "msgc", "vt", i)],
-                    [cbtn("📸 Mídias", "msgc", "media", i), cbtn("👀 Veja", "msgc", "vm", i)],
+    return text, kb([cbtn(f"📄 Texto ({n_var + (1 if sch.text_html else 0)})", "msgv", "", i),
+                     cbtn("👀 Veja", "msgc", "vt", i)],
+                    [cbtn(f"📸 Mídias ({n_items or len(media)})", "msgi", "", i), cbtn("👀 Veja", "msgc", "vm", i)],
                     [cbtn("🔠 Botões de URL", "msgc", "btn", i), cbtn("👀 Veja", "msgc", "vb", i)],
                     [cbtn(("✅ " if sch.caption_above else "❌ ") + "🖼 Mídia abaixo do texto", "msgc", "above", i)],
                     [cbtn("👀 Visualização completa", "msgc", "full", i)],
@@ -334,7 +334,7 @@ async def _update(db: Database, sch_id: int, **fields) -> None:
 async def screen_items(db: Database, sch: Schedule) -> Screen:
     items = await _items(db, sch.id)
     order = "em ordem" if (sch.content_order or "seq") == "seq" else "sorteado (só repete depois de usar todos)"
-    lines = [f"📚 <b>Vários conteúdos</b> · {escape(sch.name or 'mensagem repetida')}\n",
+    lines = [f"📸 <b>Mídias</b> · {escape(sch.name or 'mensagem repetida')}\n",
              "Cada envio da programação usa <b>um</b> destes posts, " + order + ". "
              "Os botões de link, destinos e horários são os da programação. "
              "Conteúdo com 💬 texto próprio sai sempre com ele; sem texto, sai com a próxima variação de texto.\n",
@@ -348,7 +348,8 @@ async def screen_items(db: Database, sch: Schedule) -> Screen:
         lines.append("<i>Nenhum ainda: a programação usa a mensagem principal.</i>")
     if len(items) > 30:
         lines.append(f"… e mais {len(items) - 30}")
-    rows = [[cbtn("➕ Adicionar conteúdos", "msgi", "add", sch.id, style="primary")],
+    rows = [[cbtn("➕ Adicionar mídias", "msgi", "add", sch.id, style="primary"),
+             cbtn("🖼 Mídia única fixa", "msgc", "media", sch.id)],
             [cbtn(("✅ " if (sch.content_order or "seq") == "seq" else "") + "🔢 Em ordem", "msgi", "ord", sch.id, j=0),
              cbtn(("✅ " if sch.content_order == "random" else "") + "🎲 Sorteado", "msgi", "ord", sch.id, j=1)]]
     pairs = list(enumerate(items[:30], 1))
