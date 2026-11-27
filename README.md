@@ -1,4 +1,4 @@
-# Bot Mãe — versão 10
+# Bot Mãe — versão 11
 
 Bot de Telegram que cria e cuida de bots filhos. Cada pessoa cria o próprio bot pelo @BotFather, encaminha o token para o bot mãe e o bot filho já liga, com painel próprio.
 
@@ -102,7 +102,7 @@ O plano completo (acervo, mensagens repetidas, palavras proibidas, parcerias) es
 pip install -r requirements.txt
 python tests/test_bot.py
 ```
-Roda tudo com um Telegram falso. Precisa terminar com "199/199 passaram" ou mais.
+Roda tudo com um Telegram falso. Precisa terminar com "201/201 passaram" ou mais.
 
 ## Arquivos
 

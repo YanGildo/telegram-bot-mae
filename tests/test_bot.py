@@ -919,6 +919,11 @@ async def main():
     calls = await cclick(OWNER, CP(s="msgv", i=sm.id).pack())
     check("v8: tirar variação", any("Copy 2" not in m.text and "<b>2.</b> Copy 3" in m.text for m in texts(calls)))
 
+    calls = await cclick(OWNER, CP(s="msgc", a="full", i=sm.id).pack())
+    check("v11: visualização completa mostra um conteúdo da lista", any(isinstance(m, SendPhoto) and m.chat_id == 111 for _, m in calls))
+    calls = await cclick(OWNER, CP(s="msgc", i=sm.id).pack())
+    check("v11: tela indica que as mídias vêm do 📚", any("usa as do 📚" in m.text for m in texts(calls)))
+
     # ================= v10: funções por grupo, textos sorteados um por um =================
     calls = await cclick(OWNER, CP(s="chat", i=grp_row.id).pack())
     check("v10: detalhe do grupo mostra as funções ligadas", any("✅ 📣 Publicar" in buttons(m) and "✅ 🔨 Ban em todos" in buttons(m)

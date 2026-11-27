@@ -292,7 +292,9 @@ async def screen_content(db: Database, sch: Schedule) -> Screen:
     n_var = len(_variants(sch))
     text = ("✍️ <b>Personalizar mensagem</b>\n\n"
             f"📄 Texto {'✅' if sch.text_html else '❌'}" + (f" + {n_var} variação(ões)" if n_var else "") + "\n"
-            f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n"
+            + (f"📸 Mídias: usa as do 📚 Vários conteúdos ({n_items})\n" if n_items else
+               f"📸 Mídias {'✅ ' + media_summary(media) if media else '❌'}\n")
+            + 
             f"🔠 Botões de link {'✅' if rows_btn else '❌'}\n"
             f"🖼 Mídia abaixo do texto {'✅' if sch.caption_above else '❌'}\n"
             f"📚 Vários conteúdos: {n_items or '❌'}\n\n"
@@ -499,12 +501,26 @@ async def on_schedule(cb: CallbackQuery, callback_data: CP, state: FSMContext, b
         elif a in ("vt", "vm", "vb", "full"):
             text = sch.text_html if a in ("vt", "full") else ""
             media = load_media(sch.media) if a in ("vm", "full") else []
+            items = await _items(db, i)
+            if a in ("vm", "full") and items:  # com vários conteúdos, mostra o próximo da lista (sem gastar a vez)
+                if (sch.content_order or "seq") == "seq":
+                    nxt = next((x for x in items if x.seq > (sch.content_cursor or 0)), items[0])
+                else:
+                    nxt = min(items, key=lambda x: x.used_count)
+                media = load_media(nxt.media)
+                if a == "full" and nxt.text_html:
+                    text = nxt.text_html
+                elif a == "full":
+                    from .scheduling import text_pool
+                    pool = text_pool(sch)
+                    text = pool[(sch.text_cursor or 0) % len(pool)] if pool else ""
             markup = buttons_markup(sch.buttons) if a in ("vb", "full") else None
             if a == "vb" and markup is not None:
                 text = "🔠 Botões:"
             try:
                 await send_post(bot, cb.from_user.id, text, media, markup, sch.caption_above)
-                await cb.answer("Enviei aqui embaixo.")
+                await cb.answer(f"Enviei aqui embaixo: o próximo dos {len(items)} conteúdos." if items and a != "vb"
+                                else "Enviei aqui embaixo.")
             except ValueError:
                 await cb.answer("Essa parte está vazia.", show_alert=True)
             except (TelegramBadRequest, TelegramForbiddenError) as e:
